@@ -6,7 +6,7 @@ import sys
 import io
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_core.messages import Document
+from langchain_core.documents import Document #messages -> documents로 수정
 # 이유
 
 # - 반복 실행 X
