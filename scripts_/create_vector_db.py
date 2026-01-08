@@ -20,7 +20,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 
 # API 키 확인
 if not os.getenv("OPENAI_API_KEY"):
-    print(" 오류: .env 파일이 없거나 OPENAI_API_KEY가 설정되지 않았습니다.")
+    print("오류: .env 파일이 없거나 OPENAI_API_KEY가 설정되지 않았습니다.")
     sys.exit(1)
 
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
@@ -39,7 +39,7 @@ def main():
     print("벡터 DB 생성 작업을 시작합니다...")
 
     # 1. 기존 DB 삭제 (초기화)
-    # 기존에 테스트하던 찌꺼기 데이터가 남지 않도록 깔끔하게 지우고 시작합니다.
+    # 기존 DB 삭제 (중복 방지)
     if os.path.exists(DB_PATH):
         print(f"기존 DB 폴더('{DB_PATH}')를 초기화합니다...")
         try:
@@ -116,7 +116,7 @@ def main():
     print("   (데이터 양에 따라 시간이 조금 걸릴 수 있습니다)")
     
     try:
-        vectorstore = Chroma.from_documents(
+        Chroma.from_documents(
             documents=documents,
             embedding=embeddings,
             persist_directory=DB_PATH

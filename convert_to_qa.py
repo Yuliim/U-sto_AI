@@ -7,7 +7,6 @@ import re
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
-import os
 
 # ==========================================
 # 🔇 [침묵 모드] 화면 출력 인코딩 강제 설정
@@ -47,8 +46,8 @@ def extract_json_from_text(text):
                 if match:
                     json_str = match.group()
                     return json.loads(json_str)
-            except:
-                pass
+            except json.JSONDecodeError:
+                return None
     return None
 
 def convert_content_to_qa():
@@ -67,9 +66,9 @@ def convert_content_to_qa():
 
     print(f"Found {len(input_files)} files. Processing...")
 
-    for file_path in input_files:
+    for file_idx, file_path in enumerate(input_files, start=1):
         file_name = os.path.basename(file_path)
-        print(f"\nProcessing File: {input_files.index(file_path) + 1}/{len(input_files)} ({file_name})")
+        print(f"\nProcessing File: {file_idx}/{len(input_files)} ({file_name})")
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -94,8 +93,8 @@ def convert_content_to_qa():
                     else:
                         input_text = str(item)
                         if len(input_text) < 10:
-                             print(f"   [SKIP] Item {idx+1} (Too short)")
-                             continue
+                            print(f"   [SKIP] Item {idx+1} (Too short)")
+                            continue
 
                     # 프롬프트 강화: 무조건 JSON만 뱉으라고 협박(?)
                     prompt_text = f"""
