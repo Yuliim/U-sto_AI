@@ -2,6 +2,15 @@
 
 from sentence_transformers import CrossEncoder  # Cross-Encoder 로드
 
+_reranker = None  # 전역 캐시
+
+def get_reranker(model_name: str):
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoder(model_name)
+    return _reranker
+
+
 class CrossEncoderReranker:
     def __init__(self, model_name: str):
         # Cross-Encoder 모델 초기화

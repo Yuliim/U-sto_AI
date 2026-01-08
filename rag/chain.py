@@ -3,12 +3,19 @@ from vectorstore.retriever import retrieve_docs  # 검색 함수
 from rag.prompt import build_prompt  # 프롬프트 생성
 from app.config import (
     NO_CONTEXT_RESPONSE,
-    CROSS_ENCODER_MODEL_NAME,
-    RERANK_TOP_N
 )
-from vectorstore.cross_encoder import CrossEncoderReranker
-# Chunk Attribution 포함 RAG Chain
-# chain.py
+from vectorstore.cross_encoder import CrossEncoderReranker, get_reranker
+# ==============================
+# FAISS score 기반 RAG Chain
+# ==============================
+
+# FAISS distance threshold
+# 값이 작을수록 유사, threshold 초과 시 문서 폐기
+FAISS_SCORE_THRESHOLD = 10.0
+
+# LLM에 전달할 최대 문서 수
+TOP_N_CONTEXT = 6
+
 
 def run_rag_chain(
     llm,
@@ -21,9 +28,9 @@ def run_rag_chain(
     # Chroma VectorStore 사용
     # 내부적으로 FAISS 인덱스가 검색 수행
     retrieved_docs = retrieve_docs(
-        vectordb=vectordb,
-        query=user_query,
-        top_k=retriever_top_k
+        vectordb=vectordb,     # 벡터 DB
+        query=user_query,      # 사용자 질문
+        top_k=retriever_top_k  # 후보 문서 수
     )
 
     # 검색 실패 시 fallback
@@ -33,35 +40,50 @@ def run_rag_chain(
             "attribution": []
         }
 
-    # 2️. Cross-Encoder Re-ranking 초기화
-    reranker = CrossEncoderReranker(CROSS_ENCODER_MODEL_NAME)
+    # 2️. FAISS score 기반 필터링
+    # threshold 이하 문서만 유지
+    filtered_docs = [
+        (doc, score)
+        for doc, score in retrieved_docs
+        if score <= FAISS_SCORE_THRESHOLD
+    ]
 
-    # Re-ranking 수행
-    reranked_docs = reranker.rerank(
-        query=user_query,
-        docs_with_scores=retrieved_docs,
-        top_n=RERANK_TOP_N
-    )
+    # threshold 통과 문서가 없는 경우 fallback
+    if not filtered_docs:
+        return {
+            "answer": NO_CONTEXT_RESPONSE,
+            "attribution": []
+        }
 
-    # 3️. Context 구성
+    # 3️. FAISS score 기준 정렬
+    # distance 기준이므로 오름차순 정렬
+    filtered_docs.sort(key=lambda x: x[1])
+
+    # 상위 N개 문서 선택
+    top_docs = filtered_docs[:TOP_N_CONTEXT]
+
+    # 4. Context 구성
     context = "\n\n".join([
         doc.page_content  # 문서 본문
-        for doc, _ in reranked_docs
+        for doc, _ in top_docs
     ])
 
-    # 4. Chunk Attribution 구성
+    # 5. Chunk Attribution 구성
     attribution = [
         {
             "doc_id": doc.metadata.get("doc_id"),
-            "score": score
+            "score": float(score)  # numpy 타입 제거
         }
-        for doc, score in reranked_docs
+        for doc, score in top_docs
     ]
 
-    # 5. 프롬프트 생성
-    prompt = build_prompt(context, user_query)
+    # 6. 프롬프트 생성
+    prompt = build_prompt(
+        context=context,
+        question=user_query
+    )
 
-    # 6. LLM 호출 (top-p + top-k 상한 조합)
+    # 7. LLM 호출 (top-p + top-k 상한 조합)
     response = llm.invoke(
         [
             SystemMessage(content=

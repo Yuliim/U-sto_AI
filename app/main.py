@@ -72,7 +72,7 @@ def main():
 
         # 출력 정리
         print("\r🤖 AI 답변:")
-        print(answer)
+        print(answer["answer"])
         print("-" * 50)
 
 if __name__ == "__main__":
