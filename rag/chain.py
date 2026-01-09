@@ -4,7 +4,7 @@ from vectorstore.retriever import retrieve_docs  # 검색 함수
 
 from rag.prompt import build_prompt  # 프롬프트 생성
 from app.config import (
-    NO_CONTEXT_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K
+    NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K
 )
 
 # RAG 시스템 페르소나 정의 (유지보수를 위해 상수로 분리)
@@ -101,7 +101,7 @@ def run_rag_chain(
 
         # 3. 프로그램이 죽지 않도록 안전한 기본값(Fallback) 반환
         return {
-            "answer": NO_CONTEXT_RESPONSE,
+            "answer": TECHNICAL_ERROR_RESPONSE,
             "attribution": []
         }
 

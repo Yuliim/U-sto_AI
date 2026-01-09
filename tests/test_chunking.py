@@ -19,9 +19,21 @@ class TestTextSplitting(unittest.TestCase):
         """2. 공백이 없는 긴 텍스트 (Look-back 실패 시 강제 절단 테스트)"""
         text = "A" * 100  # 띄어쓰기 없는 100글자
         chunks = split_text(text, chunk_size=50, overlap=10)
-        self.assertEqual(len(chunks), 2) # 50, 50으로 나뉨
+        # 최소 두 개 이상의 청크가 생성되는지 확인
+        self.assertGreaterEqual(len(chunks), 2)
+        # 첫 번째 청크는 정확히 50글자여야 함
         self.assertEqual(chunks[0], "A" * 50)
-        self.assertEqual(chunks[1], "A" * 50) # start가 next_step으로 이동했다가 겹쳐서 조정됨
+        # 모든 청크는 'A' 문자로만 구성되어야 함
+        for chunk in chunks:
+            self.assertTrue(set(chunk) == {"A"})
+        # 인접한 청크들 사이에 overlap(10글자)이 유지되는지 확인
+        for i in range(len(chunks) - 1):
+            self.assertEqual(chunks[i][-10:], chunks[i + 1][:10])
+        # overlap을 고려하여 원본 텍스트가 복원되는지 확인
+        reconstructed = chunks[0]
+        for chunk in chunks[1:]:
+            reconstructed += chunk[10:]
+        self.assertEqual(reconstructed, text)
 
     def test_overlap_logic(self):
         """3. 오버랩(겹치는 구간)이 잘 작동하는지 테스트"""
@@ -30,8 +42,8 @@ class TestTextSplitting(unittest.TestCase):
         # 로직상 look-back이 없으므로 단순 잘림
         chunks = split_text(text, chunk_size=5, overlap=2)
         
-        # 첫 번째 청크 끝부분과 두 번째 청크 앞부분이 겹치는지 확인
-        self.assertTrue(chunks[0].endswith(chunks[1][:2]))
+        # 첫 번째 청크 끝부분(마지막 2글자)과 두 번째 청크 앞부분(처음 2글자)이 같은지 확인
+        self.assertEqual(chunks[0][-2:], chunks[1][:2])
 
     def test_infinite_loop_prevention(self):
         """4. chunk_size <= overlap 일 때 에러 발생(무한루프 방지) 테스트"""

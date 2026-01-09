@@ -5,6 +5,10 @@ import json  # JSON 파싱 모듈
 import os    # 파일 경로 처리 모듈
 from typing import List, Dict  # 타입 힌트용
 
+# LOOKBACK_RATIO: 청크 분할 시 문맥 유지를 위해 뒤로 되돌아가는 최대 비율 (30%)
+# (이유: 너무 많이 뒤로 가면 청크 길이가 지나치게 짧아져 효율이 떨어짐)
+LOOKBACK_RATIO = 0.3
+
 # Chunking 규칙 함수 정의 (여기서 규칙을 수정합니다)
 def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
     """
@@ -73,18 +77,24 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
         # 마지막 부분이 아니라면, 단어가 잘리지 않게 뒤에서부터 공백/구두점 탐색
         if end < text_len:
             # end 지점에서부터 overlap 범위 내에서 가장 가까운 공백/마침표 찾기
-            
-            # LOOKBACK_RATIO: 청크 크기의 최대 30%까지만 뒤로 되돌아가며 탐색 허용
-            # (이유: 너무 많이 뒤로 가면 청크 길이가 지나치게 짧아져 효율이 떨어짐)
-            LOOKBACK_RATIO = 0.3
             look_back_limit = max(start + 1, end - int(chunk_size * LOOKBACK_RATIO))
 
+            found_split = False
             for i in range(end, look_back_limit, -1):
                 if text[i] in [' ', '\n', '.', '!', '?']:
                     end = i + 1  # 공백/구두점 다음에서 자름
+                    found_split = True
                     break
-            
-            # 적절한 분기점을 못 찾았다면 강제로 자름 (기본 end 유지)
+            # 위의 제한된 범위 내에서 적절한 분기점을 못 찾았다면,
+            # 현재 청크(start~end) 전체를 대상으로 한 번 더 뒤에서부터 탐색
+            if not found_split:
+                for i in range(end, start, -1):
+                    if text[i] in [' ', '\n', '.', '!', '?']:
+                        end = i + 1  # 공백/구두점 다음에서 자름
+                        found_split = True
+                        break
+            # 여전히 분기점을 찾지 못한 경우에는 기본 end에서 잘라 단어가
+            # 중간에서 잘릴 수 있다는 점을 감수한다.
 
         chunk = text[start:end].strip()
 

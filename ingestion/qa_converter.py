@@ -5,6 +5,11 @@ import json  # JSON 처리
 import re    # 정규식 처리
 import traceback
 
+# MIN_TRUNCATION_RATIO: 텍스트를 자를 때, 마침표(.)를 찾더라도
+# 전체 허용 길이의 최소 50% 이상은 유지하도록 보장하는 비율.
+# (이유: 마침표가 문장 초반에 나와서 텍스트가 너무 많이 잘려나가는 것을 방지)
+MIN_TRUNCATION_RATIO = 0.5
+
 # 프롬프트 템플릿 설정 (유지보수를 위해 로직과 분리하여 최상단 배치)
 # 주의: 아래 템플릿의 이중 중괄호 {{ ... }}는 오타가 아닙니다.
 # Python의 .format() 메서드 사용 시, 변수가 아닌 '문자 그대로의 중괄호'를 표현하기 위해 이스케이프(Escape) 처리한 것입니다.
@@ -109,7 +114,10 @@ def convert_to_qa(item: Dict, llm: ChatOpenAI) -> Dict:
         truncated_context = context_text[:MAX_CONTEXT_CHARS]
         # 가능한 경우 문장 단위(마침표 기준)로 끊어서 부자연스러운 잘림을 최소화
         last_sentence_end = truncated_context.rfind(".")
-        if last_sentence_end != -1 and last_sentence_end > MAX_CONTEXT_CHARS * 0.5:
+
+        # [수정됨] 매직 넘버(0.5)를 상수로 대체하여 가독성 개선
+        # 마침표가 발견되었고, 그 위치가 최소 유지 비율(50%)보다 뒤에 있을 때만 자름
+        if last_sentence_end != -1 and last_sentence_end > MAX_CONTEXT_CHARS * MIN_TRUNCATION_RATIO:
             truncated_context = truncated_context[: last_sentence_end + 1]
     else:
         truncated_context = context_text
