@@ -7,8 +7,11 @@ from typing import List, Dict  # 타입 힌트용
 
 # Chunking 규칙 함수 정의 (여기서 규칙을 수정합니다)
 def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    if not text:
-        return []
+    
+    # [Fix 1] 유효성 검사 추가 (Copilot 지적 사항)
+    # chunk_size가 overlap보다 커야 루프가 정상적으로 앞으로 나아갑니다.
+    if chunk_size <= overlap:
+        raise ValueError(f"chunk_size({chunk_size})는 overlap({overlap})보다 커야 합니다.")
     
     chunks = []
     start = 0
@@ -17,20 +20,42 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
     while start < text_len:
         end = min(start + chunk_size, text_len)
 
-        if end < text_len and text[end] != " ":
-            last_space = text.rfind(" ", start, end)
-            if last_space != -1:
-                end = last_space
+        # 마지막 부분이 아니라면, 단어가 잘리지 않게 뒤에서부터 공백/구두점 탐색
+        if end < text_len:
+            # end 지점에서부터 overlap 범위 내에서 가장 가까운 공백/마침표 찾기
+            # (너무 많이 뒤로 가면 안 되므로 최대 chunk_size의 30%까지만 뒤로 탐색)
+            look_back_limit = max(start + 1, end - int(chunk_size * 0.3))
+            
+            found_split = False
+            for i in range(end, look_back_limit, -1):
+                if text[i] in [' ', '\n', '.', '!', '?']:
+                    end = i + 1  # 공백/구두점 다음에서 자름
+                    found_split = True
+                    break
+            
+            # 적절한 분기점을 못 찾았다면 강제로 자름 (기본 end 유지)
 
         chunk = text[start:end].strip()
+
+        # 빈 청크가 아니면 추가
         if chunk:
             chunks.append(chunk)
 
+        # [Fix 2] 다음 시작점 계산 로직 개선
+        # 무한 루프 방지를 위해 반드시 start가 증가하도록 보장
         next_step = end - overlap
+
+        # 겹치는 부분이 현재 시작점보다 뒤에 있어야 함.
+        # 만약 청크가 너무 작아서 next_step이 start보다 앞서거나 같다면,
+        # 겹치지 않더라도 그냥 end부터 시작하게 함 (무한 루프 방지)
         if next_step <= start: 
             start = end
         else:
             start = next_step
+        
+        # [Safety Check] 만약 어떤 이유로든 start가 이전과 같거나 줄어들면 강제 종료
+        if start >= text_len:
+            break
         
     return chunks
 

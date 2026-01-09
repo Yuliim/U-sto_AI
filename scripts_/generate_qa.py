@@ -54,20 +54,22 @@ def main():
     print(" AI가 문서를 읽고 질문을 생성 중입니다...")
 
     for doc in tqdm(documents, desc="QA 변환 진행"):
-        qa_pair = convert_to_qa(doc, llm)
+        # [수정] 변수명 변경 (qa_pair -> qa_data)
+        # 단순 쌍(Pair)이 아니라 메타데이터가 포함된 전체 데이터(Data)임을 명시
+        qa_data = convert_to_qa(doc, llm)
         
         # 강력한 데이터 검증 (Validation)
         # qa_pair가 없거나, 필수 필드(질문, 답변)가 비어있으면 스킵
-        if not qa_pair:
+        if not qa_data:
             # 변환 실패 (이미 converter 내부에서 처리됨)
             continue
             
-        if not qa_pair.get("question") or not qa_pair.get("answer"):
+        if not qa_data.get("question") or not qa_data.get("answer"):
             # tqdm을 쓸 때는 print 대신 tqdm.write를 써야 진행바가 안 깨집니다.
             tqdm.write(f"[Skip] 불완전한 데이터 형식 제외됨: {doc.get('title', 'Untitled')}")
             continue
 
-        generated_data.append(qa_pair)
+        generated_data.append(qa_data)
 
     # 4. 저장
     output_file = os.path.join(OUTPUT_FOLDER, 'manual_qa_final.json')

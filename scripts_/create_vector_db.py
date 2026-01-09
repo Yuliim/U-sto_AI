@@ -23,8 +23,6 @@ if not os.getenv("OPENAI_API_KEY"):
     print("오류: .env 파일이 없거나 OPENAI_API_KEY가 설정되지 않았습니다.")
     sys.exit(1)
 
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-
 def main():
     # [설정] 경로 지정
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +37,6 @@ def main():
     print("벡터 DB 생성 작업을 시작합니다...")
 
     # 1. 기존 DB 삭제 (초기화)
-    # 기존 DB 삭제 (중복 방지)
     if os.path.exists(DB_PATH):
         print(f"기존 DB 폴더('{DB_PATH}')를 초기화합니다...")
         try:
@@ -64,7 +61,7 @@ def main():
 
     # 데이터가 리스트가 아니면 즉시 종료
     if not isinstance(data, list):
-        print("❌ [Error] 데이터 형식이 잘못되었습니다.")
+        print("[오류] 데이터 형식이 잘못되었습니다.")
         print(f" - 기대 형식: list (JSON Array)")
         print(f" - 실제 형식: {type(data)}")
         sys.exit(1)
@@ -108,12 +105,8 @@ def main():
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
     # 임베딩 진행 상황 구체적 명시
-    print(f"Chroma DB 저장 시작... (총 {len(documents)}개 벡터 변환)")
-    print(f"저장 위치: {DB_PATH}")
+    print(f"Chroma DB 저장 시작... (총 {len(documents)}개 벡터 변환, 저장 위치: {DB_PATH})")
     print("(데이터 양에 따라 시간이 조금 걸릴 수 있습니다...)")
-
-    print(f"Chroma DB에 저장 중... ({DB_PATH})")
-    print("   (데이터 양에 따라 시간이 조금 걸릴 수 있습니다)")
     
     try:
         Chroma.from_documents(

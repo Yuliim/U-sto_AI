@@ -6,6 +6,9 @@ import re    # 정규식 처리
 import traceback
 
 # 프롬프트 템플릿 설정 (유지보수를 위해 로직과 분리하여 최상단 배치)
+# 주의: 아래 템플릿의 이중 중괄호 {{ ... }}는 오타가 아닙니다.
+# Python의 .format() 메서드 사용 시, 변수가 아닌 '문자 그대로의 중괄호'를 표현하기 위해 이스케이프(Escape) 처리한 것입니다.
+# 실제 LLM에게 프롬프트가 전달될 때는 홀수 중괄호 { ... } 로 정상 변환됩니다.
 QA_PROMPT_TEMPLATE = """
 아래 내용을 바탕으로 사용자 질문(question)과 답변(answer) 1쌍을 생성해.
 또한 내용의 주제를 파악해서 적절한 카테고리(category)를 단어 1개로 추출해줘. (예: 규정, 절차, 시스템, 일반 등)
@@ -25,7 +28,7 @@ def _extract_json(text: str) -> Dict:
     # LLM 응답에서 JSON만 추출하는 내부 함수
     try:
         return json.loads(text)  # 바로 파싱 시도
-    except:
+    except json.JSONDecodeError:
         # 마크다운 코드블록 제거
         text = text.replace("```json", "").replace("```", "")
         # 중괄호 {} 로 감싸진 부분만 정규식으로 추출

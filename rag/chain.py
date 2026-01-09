@@ -1,3 +1,4 @@
+import traceback
 from langchain_core.messages import SystemMessage, HumanMessage  # 메시지 타입
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 from rag.prompt import build_prompt  # 프롬프트 생성
@@ -19,7 +20,7 @@ def run_rag_chain(llm, vectordb, user_query: str):
     docs = retrieve_docs(vectordb, user_query)
 
     if not isinstance(docs, list) or not docs:
-        print(f"[Debug] 검색된 문서가 없거나 타입이 잘못되었습니다. (Query: {user_query})")
+        print(f"[Debug] 검색된 문서가 없거나 타입이 잘못되었습니다. (Query는 로깅하지 않음)")
         return NO_CONTEXT_RESPONSE
 
     # 컨텍스트 결합
@@ -37,6 +38,11 @@ def run_rag_chain(llm, vectordb, user_query: str):
         return response.content
 
     except Exception as e:
-        print(f"[Error] LLM 답변 생성 중 오류 발생: {e}")
+        print(f"[오류] LLM 답변 생성 실패: {e}")
+        print("상세 에러 로그:")
+        print(traceback.format_exc())
         # 에러 발생 시 사용자에게 보여줄 기본 메시지 반환
-        return "죄송합니다. 답변을 생성하는 도중 내부 오류가 발생했습니다."
+        return (
+            "죄송합니다. 답변을 생성하는 도중 내부 오류가 발생했습니다.\n"
+            "잠시 후 다시 시도해 주시거나, 문제가 지속되면 관리자에게 문의해 주세요."
+        )
