@@ -13,6 +13,7 @@ from app.config import (
     RERANK_DEBUG
 )
 
+
 # RAG 시스템 페르소나 정의 (유지보수를 위해 상수로 분리)
 RAG_SYSTEM_PROMPT = """
 당신은 대학교 행정 업무를 지원하는 전문적인 AI 어시스턴트입니다.
@@ -23,6 +24,15 @@ RAG_SYSTEM_PROMPT = """
 2. 반드시 격식 있고 정중한 존댓말(하십시오체)을 사용하세요.
 3. 모르는 내용은 솔직히 모른다고 답변하세요.
 """
+
+# reranker 싱글톤 인스턴스
+_reranker = None
+
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
+    return _reranker
 
 def run_rag_chain(
     llm,
@@ -55,11 +65,15 @@ def run_rag_chain(
     ]
 
     # reranking 직전 (retrieval 결과 확인)
-    if USE_RERANKING and RERANK_DEBUG:
-        print("[DEBUG] Retrieval 결과 (정렬 전):")
-        for i, (doc, score) in enumerate(filtered_docs[:5]):
-            print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score}")
+    if USE_RERANKING:
+        if RERANK_DEBUG:
+            print("[DEBUG] Retrieval 결과 (정렬 전):")
+            for i, (doc, score) in enumerate(filtered_docs[:5]):
+                print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score}")
             
+    # 정렬 먼저
+    filtered_docs.sort(key=lambda x: x[1])  
+
     # Re-ranking 대상 후보 수 제한
     rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
 
@@ -76,21 +90,19 @@ def run_rag_chain(
     # distance 기준이므로 오름차순 정렬
     filtered_docs.sort(key=lambda x: x[1])
 
-    if USE_RERANKING and RERANK_DEBUG:
-        print("[DEBUG] Re-ranking 적용")
+    if USE_RERANKING:
+        if RERANK_DEBUG:
+            print("[DEBUG] Re-ranking 적용")
 
         # 3.5 Re-ranking
-        reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
-
-        reranked_docs = reranker.rerank(
+        reranker = get_reranker()
+        top_docs = reranker.rerank(
             query=user_query,
             docs=rerank_candidates,
             top_n=RERANK_TOP_N
         )
-
-        top_docs = reranked_docs
     else:
-         # score 버리고 Document만 유지
+        # score 버리고 Document만 유지
         top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
 
     # reranking 이후 (최종 선택 결과 확인)
@@ -157,7 +169,8 @@ def run_rag_chain(
 """
 RAG Chain 구성
 - Retrieval: Chroma(HNSW) 기반 후보 문서 검색
-- Re-ranking: score 기반 필터링 및 재정렬
+- Filtering: similarity score threshold 기반 후보 필터링
+- Re-ranking: CrossEncoder 기반 의미론적 재점수화 및 문서 재정렬
 - Context Selection: 상위 chunk 선별
 - Generation: context 기반 LLM 응답 생성
 - Chunk Attribution: 사용 chunk metadata 추적

@@ -1,5 +1,5 @@
 from sentence_transformers import CrossEncoder
-from app.config import RERANK_DEBUG, USE_RERANKING
+from app.config import RERANK_DEBUG
 
 _reranker_instance = None
 
@@ -13,15 +13,29 @@ def get_reranker(model_name: str):
 
 class CrossEncoderReranker:
     def __init__(self, model_name: str):
-        if RERANK_DEBUG:
-            print(f"[RERANKER] 모델 로딩: {model_name}")
-
         self.model = get_reranker(model_name)
 
         if RERANK_DEBUG:
             print("[RERANKER] 모델 로딩 완료")
 
     def rerank(self, query: str, docs: list, top_n: int):
+        """
+        Re-rank candidate documents for a query using a Cross-Encoder.
+
+        Parameters
+        ----------
+        query : str
+            사용자 질의 문자열
+        docs : list
+            (Document, retrieval_score) 형태의 리스트
+        top_n : int
+            반환할 상위 문서 개수
+
+        Returns
+        -------
+        list
+            Cross-Encoder 점수 기준으로 재정렬된 Document 리스트
+        """
         if RERANK_DEBUG:
             print(f"[RERANKER] Re-ranking 시작 | 후보 수: {len(docs)}")
 
