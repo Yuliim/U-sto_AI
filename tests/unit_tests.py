@@ -91,6 +91,10 @@ class TestRAGChain(unittest.TestCase):
         self.assertIn("doc_id", first)
 
     def test_reranking_enabled_pipeline(self):
+        """
+        Re-ranking 활성화 상태에서도
+        RAG 파이프라인이 정상적으로 동작하는지 검증
+        """
         response = run_rag_chain(
             llm=self.llm,
             vectordb=self.vectordb,

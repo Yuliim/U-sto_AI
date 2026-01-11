@@ -25,15 +25,6 @@ RAG_SYSTEM_PROMPT = """
 3. 모르는 내용은 솔직히 모른다고 답변하세요.
 """
 
-# reranker 싱글톤 인스턴스
-_reranker = None
-
-def get_reranker():
-    global _reranker
-    if _reranker is None:
-        _reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
-    return _reranker
-
 def run_rag_chain(
     llm,
     vectordb,
@@ -64,6 +55,13 @@ def run_rag_chain(
         if retrieved_score <= SIMILARITY_SCORE_THRESHOLD
     ]
 
+     # threshold 통과 문서가 없는 경우 fallback
+    if not filtered_docs:
+        return {
+            "answer": NO_CONTEXT_RESPONSE,
+            "attribution": []
+        }
+
     # reranking 직전 (retrieval 결과 확인)
     if USE_RERANKING:
         if RERANK_DEBUG:
@@ -75,16 +73,8 @@ def run_rag_chain(
     filtered_docs.sort(key=lambda x: x[1])  
 
     # Re-ranking 대상 후보 수 제한
-    rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
-
-
-    # threshold 통과 문서가 없는 경우 fallback
-    if not filtered_docs:
-        return {
-            "answer": NO_CONTEXT_RESPONSE,
-            "attribution": []
-        }
-
+    if USE_RERANKING:
+        rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
     
     # 3️. 유사도 기반 score 기준 정렬
     # distance 기준이므로 오름차순 정렬
@@ -95,10 +85,10 @@ def run_rag_chain(
             print("[DEBUG] Re-ranking 적용")
 
         # 3.5 Re-ranking
-        reranker = get_reranker()
+        reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
         top_docs = reranker.rerank(
             query=user_query,
-            docs=rerank_candidates,
+            docs_with_scores=rerank_candidates,
             top_n=RERANK_TOP_N
         )
     else:
@@ -107,7 +97,7 @@ def run_rag_chain(
 
     # reranking 이후 (최종 선택 결과 확인)
 
-    if RERANK_DEBUG:
+    if USE_RERANKING and RERANK_DEBUG:
         print("[DEBUG] Re-ranking 후 doc_id:")
         for i, doc in enumerate(top_docs):
             print(f"  [{i}] {doc.metadata.get('doc_id')}")
@@ -122,10 +112,11 @@ def run_rag_chain(
     # 5. Chunk Attribution 구성
     attribution = [
     {
-        "doc_id": doc.metadata.get("doc_id") 
+        "doc_id": doc.metadata.get("doc_id")
     }
     for doc in top_docs
 ]
+
 
     # 6. 프롬프트 생성
     prompt = build_prompt(
@@ -170,7 +161,7 @@ def run_rag_chain(
 RAG Chain 구성
 - Retrieval: Chroma(HNSW) 기반 후보 문서 검색
 - Filtering: similarity score threshold 기반 후보 필터링
-- Re-ranking: CrossEncoder 기반 의미론적 재점수화 및 문서 재정렬
+- Re-ranking: CrossEncoder 기반 의미론적 재채점 및 문서 재정렬
 - Context Selection: 상위 chunk 선별
 - Generation: context 기반 LLM 응답 생성
 - Chunk Attribution: 사용 chunk metadata 추적

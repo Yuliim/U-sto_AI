@@ -42,7 +42,7 @@ EMBEDDING_MODEL_NAME = "text-embedding-3-small"
 # ===============================
 
 # 검색 시 가져올 문서 개수
-RETRIEVER_TOP_K = 15 # 30->15로 수정 
+RETRIEVER_TOP_K = 25
 
 # 유사도/거리 점수 threshold
 # 값이 작을수록 더 유사하며, threshold 초과 문서는 폐기
