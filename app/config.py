@@ -46,7 +46,7 @@ RETRIEVER_TOP_K = 25
 
 # 유사도/거리 점수 threshold
 # 값이 작을수록 더 유사하며, threshold 초과 문서는 폐기
-SIMILARITY_SCORE_THRESHOLD = 0.8
+SIMILARITY_SCORE_THRESHOLD = 10.0
 
 # LLM에 전달할 최대 문서 수
 TOP_N_CONTEXT = 6
