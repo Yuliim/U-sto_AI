@@ -68,7 +68,7 @@ RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 RERANK_CANDIDATE_K = 15
 
 # Re-ranking 이후 최종 Context 개수
-RERANK_TOP_N = 6
+RERANK_TOP_N = 10
 
 # Re-ranking score 로그 출력 여부 (디버깅/평가용)
 RERANK_DEBUG = False
