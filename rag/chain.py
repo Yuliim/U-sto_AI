@@ -13,8 +13,26 @@ from app.config import (
     RERANK_DEBUG
 )
 
+import logging
+logger = logging.getLogger(__name__)
 
-# RAG 시스템 페르소나 정의 (유지보수를 위해 상수로 분리)
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import PromptTemplate  # [NEW] 프롬프트 템플릿 추가
+from langchain_core.output_parsers import StrOutputParser # [NEW] 문자열 파싱 추가
+
+from vectorstore.retriever import retrieve_docs
+from rag.prompt import build_prompt
+from rag.reranker import CrossEncoderReranker
+from app.config import (
+    NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
+    RERANKER_MODEL_NAME,
+    RERANK_CANDIDATE_K,
+    RERANK_TOP_N,
+    USE_RERANKING,
+    RERANK_DEBUG
+)
+
+# RAG 시스템 페르소나 정의
 RAG_SYSTEM_PROMPT = """
 당신은 대학교 행정 업무를 지원하는 전문적인 AI 어시스턴트입니다.
 제공된 문맥(Context)을 바탕으로 사용자의 질문에 답변하세요.
@@ -25,140 +43,157 @@ RAG_SYSTEM_PROMPT = """
 3. 모르는 내용은 솔직히 모른다고 답변하세요.
 """
 
+# [NEW] 질문 정제(Refinement)용 프롬프트 정의
+QUERY_REFINE_PROMPT = """
+당신은 대학 행정 시스템 검색 전문가입니다.
+사용자의 질문을 시스템 매뉴얼(DB)에서 검색하기 가장 적합한 '공식 행정 용어'와 '키워드 중심'의 문장으로 변환하세요.
+답변에는 변환된 질문만 딱 한 문장으로 출력하세요. (설명 금지)
+
+[변환 예시]
+- 사용자: "장비 갖다 버리는 법" -> "물품 불용 신청 및 처분 절차"
+- 사용자: "이거 등록하고 저장하면 끝이야?" -> "물품 취득 등록 후 승인 요청 절차"
+- 사용자: "AI 예측 믿을만 해?" -> "사용주기 AI 예측 정확도 및 신뢰성"
+
+사용자 질문: {question}
+변환된 질문:"""
+
 def run_rag_chain(
     llm,
     vectordb,
     user_query: str,
     retriever_top_k: int = RETRIEVER_TOP_K
 ):
+    try:
+        # ------------------------------------------------------------------
+        # [STEP 0] 질문 정제 (Query Refinement) - 처방전 2 적용
+        # ------------------------------------------------------------------
+        # 사용자의 질문이 모호할 경우를 대비해, LLM을 통해 검색용 쿼리로 변환합니다.
+        
+        refine_prompt = PromptTemplate.from_template(QUERY_REFINE_PROMPT)
+        refine_chain = refine_prompt | llm | StrOutputParser()
+        
+        # LLM에게 검색어 변환 요청
+        refined_query = refine_chain.invoke({"question": user_query})
+        
+        # 로그 확인용 - logging 모듈 사용
+        logger.info(f"[Query Refinement] 원본: '{user_query}' -> 변환: '{refined_query}'")
 
-    # 1️. Retrieval
-    # Chroma VectorStore 사용
-    retrieved_docs = retrieve_docs(
-        vectordb=vectordb,     # 벡터 DB
-        query=user_query,      # 사용자 질문
-        top_k=retriever_top_k  # 후보 문서 수
-    )
+        # ------------------------------------------------------------------
+        # [STEP 1] Retrieval (검색)
+        # ------------------------------------------------------------------
+        # 중요: 검색은 'refined_query(변환된 질문)'로 수행합니다!
+        
+        retrieved_docs = retrieve_docs(
+            vectordb=vectordb,
+            query=refined_query,   # [CHANGED] user_query -> refined_query
+            top_k=retriever_top_k
+        )
 
-    # 검색 실패 시 fallback
-    if not retrieved_docs:
-        return {
-            "answer": NO_CONTEXT_RESPONSE,
-            "attribution": []
-        }
+        # 검색 실패 시 fallback
+        if not retrieved_docs:
+            return {
+                "answer": NO_CONTEXT_RESPONSE,
+                "attribution": []
+            }
 
-    # 2️. 유사도 점수 score 기반 필터링
-    # threshold 이하 문서만 유지
-    filtered_docs = [
-        (doc, retrieved_score)
-        for doc, retrieved_score in retrieved_docs
-        if retrieved_score <= SIMILARITY_SCORE_THRESHOLD
-    ]
+        # ------------------------------------------------------------------
+        # [STEP 2] 유사도 점수 필터링
+        # ------------------------------------------------------------------
+        filtered_docs = [
+            (doc, retrieved_score)
+            for doc, retrieved_score in retrieved_docs
+            if retrieved_score <= SIMILARITY_SCORE_THRESHOLD
+        ]
 
-     # threshold 통과 문서가 없는 경우 fallback
-    if not filtered_docs:
-        return {
-            "answer": NO_CONTEXT_RESPONSE,
-            "attribution": []
-        }
+        if not filtered_docs:
+            return {
+                "answer": NO_CONTEXT_RESPONSE,
+                "attribution": []
+            }
 
-    # reranking 직전 (retrieval 결과 확인)
-    if USE_RERANKING:
-        if RERANK_DEBUG:
+        # reranking 직전 디버깅
+        if USE_RERANKING and RERANK_DEBUG:
             print("[DEBUG] Retrieval 결과 (정렬 전):")
             for i, (doc, score) in enumerate(filtered_docs[:5]):
-                print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score}")
-    
-    # 기본값 None으로 명시
-    rerank_candidates = None
+                print(f"  [{i}] doc_id={doc.metadata.get('doc_id')} | score={score:.4f}")
+        
+        # 정렬 (Chroma는 score가 낮을수록 유사함 -> 오름차순 정렬)
+        filtered_docs.sort(key=lambda x: x[1])  
 
-    # 정렬 먼저
-    filtered_docs.sort(key=lambda x: x[1])  
+        # Re-ranking 대상 후보 수 제한
+        rerank_candidates = filtered_docs
+        if USE_RERANKING:
+            rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
+        
+        # ------------------------------------------------------------------
+        # [STEP 3] Re-ranking (선택 사항)
+        # ------------------------------------------------------------------
+        if USE_RERANKING:
+            if RERANK_DEBUG:
+                print("[DEBUG] Re-ranking 적용")
 
-    # Re-ranking 대상 후보 수 제한
-    if USE_RERANKING:
-        rerank_candidates = filtered_docs[:RERANK_CANDIDATE_K]
-    
-    # 3️. 유사도 기반 score 기준 정렬
-    # distance 기준이므로 오름차순 정렬
-    filtered_docs.sort(key=lambda x: x[1])
+            reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
+            
+            # 중요: Re-ranking도 '변환된 질문(refined_query)'과 문서를 비교해야 정확합니다.
+            top_docs = reranker.rerank(
+                query=refined_query,  # [CHANGED] user_query -> refined_query
+                docs_with_scores=rerank_candidates,
+                top_n=RERANK_TOP_N
+            )
+        else:
+            # Reranking 안 쓰면 상위 N개만 선택
+            top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
 
-    if USE_RERANKING:
-        if RERANK_DEBUG:
-            print("[DEBUG] Re-ranking 적용")
+        # ------------------------------------------------------------------
+        # [STEP 4] Context 구성
+        # ------------------------------------------------------------------
+        context = "\n\n".join([
+            doc.page_content for doc in top_docs 
+        ])
 
-        # 3.5 Re-ranking
-        reranker = CrossEncoderReranker(RERANKER_MODEL_NAME)
-        top_docs = reranker.rerank(
-            query=user_query,
-            docs_with_scores=rerank_candidates,
-            top_n=RERANK_TOP_N
+        # ------------------------------------------------------------------
+        # [STEP 5] Chunk Attribution 구성
+        # ------------------------------------------------------------------
+        attribution = [
+            {"doc_id": doc.metadata.get("doc_id")}
+            for doc in top_docs
+        ]
+
+        # ------------------------------------------------------------------
+        # [STEP 6] 프롬프트 생성
+        # ------------------------------------------------------------------
+        # 중요: 최종 답변 생성은 '원래 사용자의 질문(user_query)'에 대해 답해야 합니다.
+        # 문맥(Context)은 변환된 질문으로 잘 찾아왔으니, 이제 사용자에게 친절하게 답할 차례입니다.
+        
+        prompt = build_prompt(
+            context=context,
+            question=user_query  # [KEEP] 여기는 원본 질문 유지!
         )
-    else:
-        # score 버리고 Document만 유지
-        top_docs = [doc for doc, _ in filtered_docs[:TOP_N_CONTEXT]]
-
-    # reranking 이후 (최종 선택 결과 확인)
-
-    if USE_RERANKING and RERANK_DEBUG:
-        print("[DEBUG] Re-ranking 후 doc_id:")
-        for i, doc in enumerate(top_docs):
-            print(f"  [{i}] {doc.metadata.get('doc_id')}")
-
-
-    # 4. Context 구성
-    # re-ranking 이후에는 Document 리스트만 사용
-    context = "\n\n".join([
-        doc.page_content for doc in top_docs 
-    ])
-
-    # 5. Chunk Attribution 구성
-    attribution = [
-    {
-        "doc_id": doc.metadata.get("doc_id")
-    }
-    for doc in top_docs
-]
-
-
-    # 6. 프롬프트 생성
-    prompt = build_prompt(
-        context=context,
-        question=user_query
-    )
-    
-    # 7. LLM 호출 (sampling 파라미터는 LLM 생성 시 설정됨)
-    # LLM 호출
-    try:
+        
+        # ------------------------------------------------------------------
+        # [STEP 7] LLM 답변 생성
+        # ------------------------------------------------------------------
         response = llm.invoke(
             [
-                SystemMessage(content=RAG_SYSTEM_PROMPT),  # 시스템 프롬프트
-                HumanMessage(content=prompt)               # 유저 프롬프트
+                SystemMessage(content=RAG_SYSTEM_PROMPT),
+                HumanMessage(content=prompt)
             ]
         )
 
-    except Exception as e:
-        # 1. 에러가 났다는 사실과 내용을 출력 (터미널에서 확인 가능)
-        print(f"[ERROR] LLM Chain failed: {e}")
-    
-        # 문제를 일으킨 질문 내용 로깅 (디버깅용)
-        print(f"[ERROR] Failed query: {user_query}")
+        return {
+            "answer": response.content,
+            "attribution": attribution
+        }
 
-        # 2. 상세 에러 위치(몇 번째 줄인지) 출력
+    except Exception as e:
+        print(f"[ERROR] LLM Chain failed: {e}")
+        print(f"[ERROR] Failed query: {user_query}")
         print(traceback.format_exc())
 
-        # 3. 프로그램이 죽지 않도록 안전한 기본값(Fallback) 반환
         return {
             "answer": TECHNICAL_ERROR_RESPONSE,
             "attribution": []
         }
-
-    # 9. 최종 반환
-    return {
-        "answer": response.content,   # LLM 답변
-        "attribution": attribution    # 사용 문서
-    }
-
 
 """
 RAG Chain 구성

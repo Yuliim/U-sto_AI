@@ -80,8 +80,13 @@ def main():
             
             # 둘 다 내용이 있을 때만 처리
             if q and a:
-                # 검색 내용 구성
-                content = f"Category: {item.get('category', 'General')}\nTitle: {item.get('title', '')}\nQ: {q}\nA: {a}"
+                # 검색 내용 구성 - 한국어 문맥 강화 + 답변 비중 높이기
+                content = (
+                    f"문서 주제: {item.get('category', '일반')}\n"
+                    f"관련 메뉴: {item.get('title', '')}\n"
+                    f"사용자 질문: {q}\n"
+                    f"상세 답변: {a}"
+                )
                 
                 # 메타데이터 연결
                 metadata = {
