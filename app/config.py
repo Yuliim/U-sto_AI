@@ -83,5 +83,14 @@ NO_CONTEXT_RESPONSE = (
     "죄송합니다, 매뉴얼에 해당 내용이 없어 답변드리기 어렵습니다."
 )
 
-# 시스템 오류(네트워크, API 등) 발생 시 나갈 메시지
+# System Prompt 사용 여부
+ENABLE_SYSTEM_PROMPT = True
+
+# Safety Prompt 사용 여부
+ENABLE_SAFETY_PROMPT = True
+
+# Function Calling 판단 규칙 포함 여부
+ENABLE_FUNCTION_DECISION_PROMPT = True
+
+# 시스템 오류(네트워크, API 등) 발생 시 나갈 메시지 
 TECHNICAL_ERROR_RESPONSE = "시스템 오류가 발생하여 답변을 생성할 수 없습니다. 잠시 후 다시 시도해주세요."
