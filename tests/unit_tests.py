@@ -73,6 +73,28 @@ class TestPromptAssembly(unittest.TestCase):
         )
 
         self.assertNotIn("[Function Calling 판단 기준]", prompt)
+    
+    def test_safety_prompt_enabled(self):
+        config.ENABLE_SAFETY_PROMPT = True
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertIn("[안전 지침]", prompt)
+
+
+    def test_safety_prompt_disabled(self):
+        config.ENABLE_SAFETY_PROMPT = False
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertNotIn("[안전 지침]", prompt)
+
 
     def tearDown(self):
         config.ENABLE_SYSTEM_PROMPT = True
