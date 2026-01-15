@@ -2,12 +2,12 @@
 # LLM의 실제 응답을 검증하는 보안 테스트가 아니라
 # 프롬프트에 '안전 지침'이 항상 포함되는지 확인하는 정책 테스트임
 
-import json  # 시나리오 파일 로드용 모듈 import
-import os  # 파일 경로 조립용 모듈 import
-import unittest  # unittest 프레임워크 import
+import json
+import os
+import unittest
 
-import app.config as config  # config 모듈 자체 참조 import
-from rag.prompt import assemble_prompt  # 프롬프트 조립 함수 import
+import app.config as config
+from rag.prompt import assemble_prompt
 
 
 class TestPromptScenarios(unittest.TestCase):  # 시나리오 기반 프롬프트 테스트 클래스 정의
@@ -62,7 +62,7 @@ class TestPromptScenarios(unittest.TestCase):  # 시나리오 기반 프롬프�
                         token,
                         prompt,
                         f"[{sc['id']}] forbidden token found: {token}",
-    )
+                    )
 
 
 

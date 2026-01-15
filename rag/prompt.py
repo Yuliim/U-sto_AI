@@ -1,5 +1,5 @@
-import textwrap  # 들여쓰기 제거용 모듈 import
-import app.config as config  # config 모듈 자체 참조 import
+import textwrap
+import app.config as config
 
 def build_system_prompt():
     """
