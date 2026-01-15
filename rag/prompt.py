@@ -5,6 +5,9 @@ from app.config import (
 )
 
 def build_system_prompt():
+    """
+    시스템 정체성, 권한, 한계를 정의하는 프롬프트 반환
+    """
     return """
     [시스템 정체성]
     - 본 AI는 대학 물품 관리 시스템 전용 AI 챗봇이다.
@@ -16,7 +19,12 @@ def build_system_prompt():
     - Context에 없는 정보는 추측하지 않는다.
     - 외부 지식, 일반 상식 사용을 금지한다.
     """
+
+
 def build_role_prompt():
+    """
+    AI의 역할과 응답 스타일을 정의
+    """
     return """
     [역할]
     - 대학 행정 담당자를 보조하는 AI 비서 역할
@@ -25,7 +33,12 @@ def build_role_prompt():
     - 공손하고 간결한 존댓말 사용
     - 불필요한 설명, 이모지 사용 금지
     """
+
+
 def build_safety_prompt():
+    """
+    환각 및 오동작 방지를 위한 안전 지침 정의
+    """
     return """
     [안전 지침]
     - Context 외 정보 사용 금지
@@ -33,7 +46,12 @@ def build_safety_prompt():
     - 함수 실행을 직접 시도하지 않는다
     - 필요 시 '함수 호출이 필요함'까지만 판단한다
     """
+
+
 def build_function_decision_prompt():
+    """
+    Function Calling 판단 기준 정의
+    """
     return """
     [Function Calling 판단 기준]
 
@@ -48,7 +66,13 @@ def build_function_decision_prompt():
     함수 호출이 필요하다고 판단되면,
     실제 실행은 하지 말고 호출 의도만 명확히 표현한다.
     """
+
+
 def assemble_prompt(context: str, question: str) -> str:
+    """
+    System / Role / Safety / Function 판단 규칙과
+    RAG Context, 사용자 질문을 하나의 프롬프트로 조립
+    """
     sections = []
 
     if ENABLE_SYSTEM_PROMPT:
@@ -67,4 +91,3 @@ def assemble_prompt(context: str, question: str) -> str:
 
     return "\n\n".join(sections)
     
-## 
