@@ -5,7 +5,6 @@ from langchain_core.messages import HumanMessage
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import HumanMessage, SystemMessage
 
 from vectorstore.retriever import retrieve_docs
 from rag.prompt import assemble_prompt, build_question_classifier_prompt, build_query_refine_prompt
