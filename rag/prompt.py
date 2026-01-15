@@ -62,7 +62,7 @@ def build_function_decision_prompt():
     - 특정 물품, 자산, 자산번호, 물품ID가 질문에 포함된 경우
     - '조회', '확인', '상태 알려줘' 등 데이터 요청 표현이 있는 경우
         예) "G2B목록번호 12345678-abcdefg의 상태 확인"
-        예) 25년 10월 달에 구입한 노트북 자산 현황 조회해줘
+        예) 25년 10월에 구입한 노트북 자산 현황 조회해줘
     다음 경우에는 자연어로 응답한다.
     - 매뉴얼 설명
         예) "처분 절차 설명해줘"
@@ -107,6 +107,6 @@ def assemble_prompt(context: str, question: str) -> str:
 
     sections.append(f"[참고 자료]\n{context}")
     sections.append(f"[질문]\n{question}")
-    
+
     return "\n\n".join(sections)
     

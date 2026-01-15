@@ -1,5 +1,5 @@
 import traceback
-from langchain_core.messages import HumanMessage  # 메시지 타입
+from langchain_core.messages import HumanMessage  # 메시지 클래스
 from vectorstore.retriever import retrieve_docs  # 검색 함수
 
 from rag.prompt import assemble_prompt  # 프롬프트 생성
