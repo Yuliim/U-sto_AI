@@ -38,7 +38,7 @@ class TestPromptAssembly(unittest.TestCase):
         self._orig_func = config.ENABLE_FUNCTION_DECISION_PROMPT
     
     def test_system_prompt_enabled(self):
-        config.ENABLE_SYSTEM_PROMPT = False
+        config.ENABLE_SYSTEM_PROMPT = True
 
         prompt = assemble_prompt(
             context=self.context,
@@ -48,7 +48,7 @@ class TestPromptAssembly(unittest.TestCase):
         self.assertIn("[시스템 정체성]", prompt)
 
     def test_system_prompt_disabled(self):
-        config.ENABLE_SYSTEM_PROMPT = True
+        config.ENABLE_SYSTEM_PROMPT = False
 
         prompt = assemble_prompt(
             context=self.context,
@@ -58,7 +58,7 @@ class TestPromptAssembly(unittest.TestCase):
         self.assertNotIn("[시스템 정체성]", prompt)
     
     def test_function_decision_prompt_enabled(self):
-        config.ENABLE_FUNCTION_DECISION_PROMPT = False
+        config.ENABLE_FUNCTION_DECISION_PROMPT = True
         prompt = assemble_prompt(
             context=self.context,
             question=self.question
