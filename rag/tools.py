@@ -1,4 +1,5 @@
 import json
+import re # 정규표현식 모듈
 from langchain_core.tools import tool
 from typing import Optional
 
@@ -75,7 +76,9 @@ def get_asset_basic_info(asset_name: Optional[str] = None, asset_id: Optional[st
         # 예: asset_name="고성능 GPU 네트워크서버" vs keywords=["서버", "네트워크서버"...]
         if search_keywords:
             for kw in search_keywords:
-                if kw in asset["asset_name"]: # 부분 일치 확인
+                pattern = r'\b' + re.escape(kw) + r'\b'
+                
+                if re.search(pattern, asset["asset_name"]): 
                     found_assets.append(asset)
                     break # 중복 추가 방지
 
@@ -96,8 +99,29 @@ def get_asset_basic_info(asset_name: Optional[str] = None, asset_id: Optional[st
 @tool
 def navigate_to_page(page_type: str, target_id: Optional[str] = None) -> str:
     """
-    사용자가 특정 기능 수행을 원할 때 해당 시스템 화면으로 안내합니다.
-    (상세정보, 수명예측, 불용관리 등)
+        사용자가 특정 기능 수행을 원할 때 해당 자산 시스템의 화면(URL)으로 안내합니다.
+    Args:
+        page_type: 이동하려는 화면 유형을 나타내는 문자열입니다.
+            다음과 같은 값(또는 이와 유사한 한글/영문 표현)을 받습니다.
+            - "detail": 자산 상세 조회 화면. 이 경우 특정 자산으로 이동하려면
+              ``target_id``(자산 ID)를 함께 전달합니다. ``target_id``가 없으면
+              자산 목록 화면으로 이동합니다.
+            - "prediction": 수명/예측 분석 화면 (예: "예측", "prediction").
+            - "disuse": 불용 관리 등록 화면 (예: "불용", "disuse").
+            - "return": 자산 반납 등록 화면.
+            - "disposal": 자산 폐기 등록 화면.
+            - "list": 자산 목록 조회 화면.
+        target_id: 선택적인 자산 식별자(ID)입니다.
+            주로 ``page_type``이 "detail"일 때 사용되며,
+            ``/assets/view/{target_id}`` 형식의 상세 페이지 URL을 생성합니다.
+            그 외의 ``page_type`` 값에서는 무시되며 기본 경로가 사용됩니다.
+    Returns:
+        str: 다음 구조의 JSON 문자열입니다. `ensure_ascii=False`로 인코딩됩니다.
+            {
+                "action": "navigate",   # 수행할 동작 유형 (항상 "navigate")
+                "url": "<최종 이동 URL>",  # 실제로 이동해야 할 절대 URL
+                "message": "요청하신 <page_type> 화면으로 이동합니다."
+            }
     """
     base_url = "https://univ-asset-system.kr"
     

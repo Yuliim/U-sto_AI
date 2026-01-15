@@ -146,9 +146,13 @@ def build_dataset_creation_system_prompt() -> str:
 
 
 # qa_convert.py에서 사용
-def build_qa_generation_prompt():
+def build_qa_generation_prompt() -> str:
     """
-    [데이터 생성용] 매뉴얼 내용을 바탕으로 QA 쌍을 생성하는 프롬프트
+    [데이터 생성용] 매뉴얼 내용을 바탕으로 QA 쌍을 생성하는 프롬프트 템플릿을 반환합니다.
+
+    Returns:
+        str: {context} 플레이스홀더를 포함한 프롬프트 문자열. 
+             사용 시 .format(context=...)을 통해 실제 내용을 주입해야 합니다.
     """
     return textwrap.dedent("""
     아래 [내용]을 완벽하게 이해한 뒤, 사용자가 이 정보를 찾기 위해 물어볼 법한 질문(question)과 그에 대한 답변(answer)을 생성해.
