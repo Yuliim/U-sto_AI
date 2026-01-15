@@ -64,7 +64,5 @@ class TestPromptScenarios(unittest.TestCase):  # 시나리오 기반 프롬프�
                         f"[{sc['id']}] forbidden token found: {token}",
                     )
 
-
-
 if __name__ == "__main__":  # 직접 실행 시 엔트리포인트 조건
     unittest.main()  # unittest 러너 실행
