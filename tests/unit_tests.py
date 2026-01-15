@@ -15,12 +15,72 @@ from langchain_openai import ChatOpenAI
 from ingestion.embedder import get_embedding_model
 from vectorstore.chroma_store import load_chroma_db
 from rag.chain import run_rag_chain
+from rag.prompt import assemble_prompt
+
+import app.config as config
 from app.config import (
     VECTOR_DB_PATH,
     LLM_MODEL_NAME,
     LLM_TEMPERATURE,
     NO_CONTEXT_RESPONSE
 )
+class TestPromptAssembly(unittest.TestCase):
+    """
+    assemble_prompt 함수가
+    config 플래그 조합에 따라 올바른 프롬프트를 생성하는지 검증
+    """
+
+    def setUp(self):
+        self.context = "샘플 참고 자료"
+        self.question = "샘플 질문"
+    
+    def test_system_prompt_enabled(self):
+        config.ENABLE_SYSTEM_PROMPT = True
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertIn("[시스템 정체성]", prompt)
+
+    def test_system_prompt_disabled(self):
+        config.ENABLE_SYSTEM_PROMPT = False
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertNotIn("[시스템 정체성]", prompt)
+    
+    def test_function_decision_prompt_enabled(self):
+        config.ENABLE_FUNCTION_DECISION_PROMPT = True
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertIn("[Function Calling 판단 기준]", prompt)
+
+    def test_function_decision_prompt_disabled(self):
+        config.ENABLE_FUNCTION_DECISION_PROMPT = False
+
+        prompt = assemble_prompt(
+            context=self.context,
+            question=self.question
+        )
+
+        self.assertNotIn("[Function Calling 판단 기준]", prompt)
+
+    def tearDown(self):
+        config.ENABLE_SYSTEM_PROMPT = True
+        config.ENABLE_SAFETY_PROMPT = True
+        config.ENABLE_FUNCTION_DECISION_PROMPT = True
+
+
+    
 
 class TestRAGChain(unittest.TestCase):
 
