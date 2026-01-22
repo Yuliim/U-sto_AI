@@ -1,9 +1,13 @@
+import os
 import pandas as pd
 import numpy as np
 from faker import Faker
 import random
 from datetime import datetime, timedelta
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
+os.makedirs(DATA_DIR, exist_ok=True)
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -11,7 +15,8 @@ fake = Faker('ko_KR')
 
 # Phase 1 결과물 로드
 try:
-    df_acq = pd.read_csv('03_01_acquisition_master.csv')
+    file_path = os.path.join(DATA_DIR, '03_01_acquisition_master.csv')
+    df_acq = pd.read_csv(file_path)
     print(f"📂 [Phase 2] 취득 데이터 로드 완료: {len(df_acq)}건")
 except FileNotFoundError:
     print("❌ 오류: '03_01_acquisition_master.csv' 파일이 없습니다. Phase 1을 먼저 실행해주세요.")
@@ -367,22 +372,22 @@ cols_operation = [
     'G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', 
     '운용부서', '운용상태', '내용연수', '출력상태'
 ]
-df_operation[cols_operation].to_csv('04_01_operation_master.csv', index=False, encoding='utf-8-sig')
+df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 
 # [04-03] 반납 관련
 if not df_return.empty:
-    df_return.to_csv('04_03_return_list.csv', index=False, encoding='utf-8-sig')
+    df_return.to_csv(os.path.join(DATA_DIR, '04_03_return_list.csv'), index=False, encoding='utf-8-sig')
 
 # [05-01] 불용 관련
 if not df_disuse.empty:
-    df_disuse.to_csv('05_01_disuse_list.csv', index=False, encoding='utf-8-sig')
+    df_disuse.to_csv(os.path.join(DATA_DIR, '05_01_disuse_list.csv'), index=False, encoding='utf-8-sig')
 
 # [06-01] 처분 관련
 if not df_disposal.empty:
-    df_disposal.to_csv('06_01_disposal_list.csv', index=False, encoding='utf-8-sig')
+    df_disposal.to_csv(os.path.join(DATA_DIR, '06_01_disposal_list.csv'), index=False, encoding='utf-8-sig')
 
 # [물품상태이력] (상세 페이지용)
-df_history.to_csv('99_asset_status_history.csv', index=False, encoding='utf-8-sig')
+df_history.to_csv(os.path.join(DATA_DIR, '99_asset_status_history.csv'), index=False, encoding='utf-8-sig')
 
 print("✅ [Phase 2] 생애주기 시뮬레이션 및 파일 생성 완료!")
 print(f"   - 운용 자산(개별): {len(df_operation)}건")

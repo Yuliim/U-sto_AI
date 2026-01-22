@@ -1,5 +1,11 @@
 import pandas as pd
 import numpy as np
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOAD_DIR = os.path.join(BASE_DIR, "data_lifecycle") # 원천 데이터
+SAVE_DIR = os.path.join(BASE_DIR, "data_view")      # 뷰 데이터 (create_data/data_view)
+os.makedirs(SAVE_DIR, exist_ok=True) # data_view 폴더 생성
 
 # ---------------------------------------------------------
 # 0. 데이터 로드 (Phase 2 결과물)
@@ -7,10 +13,10 @@ import numpy as np
 print("📂 [Phase 3] 원천 데이터 로드 중...")
 
 try:
-    df_op = pd.read_csv('04_01_operation_master.csv') # 운용대장
-    df_rt = pd.read_csv('04_03_return_list.csv')      # 반납
-    df_du = pd.read_csv('05_01_disuse_list.csv')      # 불용
-    df_dp = pd.read_csv('06_01_disposal_list.csv')    # 처분
+    df_op = pd.read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv'))
+    df_rt = pd.read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))
+    df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
+    df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))    # 처분
 except FileNotFoundError as e:
     print(f"❌ 오류: 파일이 없습니다. Phase 2를 먼저 실행해주세요. ({e})")
     exit()
@@ -29,33 +35,33 @@ print("⚙️ [Phase 3] 화면별 요구사항에 따른 View CSV 생성 중..."
 # 1) 상단 그리드: 반납 등록 목록 (신청 건 위주)
 #    (실제론 Request ID로 묶여야 하지만, 여기선 개별 행을 신청 건으로 간주)
 view_rt_reg = df_rt[['반납일자', '반납확정일자', '등록자ID', '등록자명', '승인상태']]
-view_rt_reg.to_csv('View_04_03_반납등록목록.csv', index=False, encoding='utf-8-sig')
+view_rt_reg.to_csv(os.path.join(SAVE_DIR, 'View_04_03_반납등록목록.csv'), index=False, encoding='utf-8-sig')
 
 # 2) 하단 그리드: 반납 물품 목록 (상세)
 view_rt_item = df_rt[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서', '물품상태', '사유']]
-view_rt_item.to_csv('View_04_03_반납물품목록.csv', index=False, encoding='utf-8-sig')
+view_rt_item.to_csv(os.path.join(SAVE_DIR, 'View_04_03_반납물품목록.csv'), index=False, encoding='utf-8-sig')
 
 
 # [05-01] 물품 불용 관리
 # 1) 상단 그리드: 불용 등록 목록
 view_du_reg = df_du[['불용일자', '불용확정일자', '등록자ID', '등록자명', '승인상태']]
-view_du_reg.to_csv('View_05_01_불용등록목록.csv', index=False, encoding='utf-8-sig')
+view_du_reg.to_csv(os.path.join(SAVE_DIR, 'View_05_01_불용등록목록.csv'), index=False, encoding='utf-8-sig')
 
 # 2) 하단 그리드: 불용 물품 목록
 view_du_item = df_du[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '운용부서', '물품상태', '사유']]
-view_du_item.to_csv('View_05_01_불용물품목록.csv', index=False, encoding='utf-8-sig')
+view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_05_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
 
 
 # [06-01] 물품 처분 관리
 # 1) 상단 그리드: 처분 목록
 view_dp_reg = df_dp[['처분일자', '처분정리구분', '등록자ID', '등록자명', '승인상태']]
-view_dp_reg.to_csv('View_06_01_처분목록.csv', index=False, encoding='utf-8-sig')
+view_dp_reg.to_csv(os.path.join(SAVE_DIR, 'View_06_01_처분목록.csv'), index=False, encoding='utf-8-sig')
 
 # 2) 하단 그리드: 처분 물품 목록
 # 요청하신 '정리일자', '불용일자', '내용연수' 포함
 view_dp_item = df_dp[['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', 
                       '처분방식', '물품상태', '사유', '정리일자', '불용일자', '내용연수']]
-view_dp_item.to_csv('View_06_01_처분물품목록.csv', index=False, encoding='utf-8-sig')
+view_dp_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_처분물품목록.csv'), index=False, encoding='utf-8-sig')
 
 
 # [07-01] 보유 현황 조회 (Aggregation)
@@ -72,8 +78,7 @@ group_cols = ['G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액
 
 # dropna=False 옵션은 pandas 최신 버전 기능이므로, 위에서 fillna를 하는 방식이 가장 안전함
 view_inventory = df_op_filled.groupby(group_cols).size().reset_index(name='수량')
-view_inventory.to_csv('View_07_01_보유현황.csv', index=False, encoding='utf-8-sig')
-
+view_inventory.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황.csv'), index=False, encoding='utf-8-sig')
 # ---------------------------------------------------------
 # 2. 데이터 정합성 검증 (Validation)
 # ---------------------------------------------------------

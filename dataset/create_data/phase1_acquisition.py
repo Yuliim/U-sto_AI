@@ -1,9 +1,13 @@
+import os
 import pandas as pd
 import numpy as np
 from faker import Faker
 import random
 from datetime import datetime, timedelta
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAVE_DIR = os.path.join(BASE_DIR, "data_lifecycle")
+os.makedirs(SAVE_DIR, exist_ok=True) # 폴더가 없으면 생성
 # ---------------------------------------------------------
 # 0. 설정 및 초기화
 # ---------------------------------------------------------
@@ -233,16 +237,16 @@ cols_acquisition = [
     '운용부서', '운용상태', '내용연수', '수량', '승인상태', 
     '취득정리구분', '운용부서코드', '비고'
 ]
-df_acquisition[cols_acquisition].to_csv('03_01_acquisition_master.csv', index=False, encoding='utf-8-sig')
+df_acquisition[cols_acquisition].to_csv(os.path.join(SAVE_DIR, '03_01_acquisition_master.csv'), index=False, encoding='utf-8-sig')
 
 # [03-02] G2B 목록 조회용 (Popup Output)
 # 분류 목록 (중복 제거)
 df_class = df_acquisition[['물품분류코드', '물품분류명']].drop_duplicates()
-df_class.to_csv('03_02_g2b_class_list.csv', index=False, encoding='utf-8-sig')
+df_class.to_csv(os.path.join(SAVE_DIR, '03_02_g2b_class_list.csv'), index=False, encoding='utf-8-sig')
 
 # 품목 목록 (중복 제거)
 df_item = df_acquisition[['물품식별코드', '물품품목명', '물품분류코드']].drop_duplicates()
-df_item.to_csv('03_02_g2b_item_list.csv', index=False, encoding='utf-8-sig')
+df_item.to_csv(os.path.join(SAVE_DIR, '03_02_g2b_item_list.csv'), index=False, encoding='utf-8-sig')
 
 print("✅ [Phase 1] 데이터 생성 완료!")
 print(f"   - 총 {len(df_acquisition)}건의 취득 데이터가 생성되었습니다.")
