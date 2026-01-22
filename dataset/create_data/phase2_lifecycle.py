@@ -114,6 +114,10 @@ for idx, row in df_operation.iterrows():
     use_start_date = clear_date + timedelta(days=random.randint(0, 3))
     df_operation.at[idx, '운용상태'] = '운용' # 현재 상태 업데이트
     
+    # 출력상태 생성 (출력 80%, 미출력 20%)
+    print_status = np.random.choice(['출력', '미출력'], p=[0.2, 0.8])
+    df_operation.at[idx, '출력상태'] = print_status
+
     operation_history_list.append({
         '물품고유번호': asset_id,
         '변경일자': use_start_date.strftime('%Y-%m-%d'),
@@ -170,6 +174,7 @@ for idx, row in df_operation.iterrows():
             return_row = {
                 # ---------------반납등록목록-----------------
                 '반납일자': return_date.strftime('%Y-%m-%d'),
+                '등록일자': return_date.strftime('%Y-%m-%d'), # 등록일자 = 반납신청일
                 '반납확정일자': (return_date + timedelta(days=3)).strftime('%Y-%m-%d') if return_status == '확정' else '',
                 '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': return_status,
@@ -178,7 +183,7 @@ for idx, row in df_operation.iterrows():
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
                 '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
                 '정리일자': clear_date_str, # 취득 시 정리일자  
-                '운용부서': dept_name, '물품상태': item_condition, '사유': return_reason
+                '운용부서': dept_name, '운용상태': df_operation.at[idx, '운용상태'], '물품상태': item_condition, '사유': return_reason
             }
             return_list.append(return_row)
             
@@ -249,6 +254,7 @@ for idx, row in df_operation.iterrows():
             disuse_row = {
                 # ---------------불용등록목록-----------------
                 '불용일자': disuse_date.strftime('%Y-%m-%d'),
+                '등록일자': disuse_date.strftime('%Y-%m-%d'),
                 '불용확정일자': confirm_date_str,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1], # 관리자가 보통 처리
                 '승인상태': disuse_status,
@@ -257,7 +263,7 @@ for idx, row in df_operation.iterrows():
                 'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
                     '물품고유번호': asset_id, '취득일자': row['취득일자'], '취득금액': total_amount,
                     '정리일자': clear_date_str, # 취득 시 정리일자  
-                    '운용부서': '', 
+                    '운용부서': '', '운용상태' : df_operation.at[idx, '운용상태'], '내용연수': life_years,
                     '물품상태': return_row['물품상태'], '사유': disuse_reason
             }
             disuse_list.append(disuse_row)
@@ -284,7 +290,7 @@ for idx, row in df_operation.iterrows():
         disposal_date = disposal_base_date + timedelta(days=random.randint(14, 60))
         
         if disposal_date <= today:
-            # [수정 1] 물품 상태에 따른 처분정리구분 결정
+            # 물품 상태에 따른 처분정리구분 결정
             # 상태가 좋음(신품, 중고품) -> 주로 '매각'
             # 상태가 나쁨(정비필요품, 폐품) -> 주로 '폐기'
             current_condition = disuse_row['물품상태']
@@ -359,7 +365,7 @@ df_history = pd.DataFrame(operation_history_list)
 # [04-01] 물품 운용 대장 목록 (최종 상태가 반영된 Main Table)
 cols_operation = [
     'G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', 
-    '운용부서', '운용상태', '내용연수'
+    '운용부서', '운용상태', '내용연수', '출력상태'
 ]
 df_operation[cols_operation].to_csv('04_01_operation_master.csv', index=False, encoding='utf-8-sig')
 
