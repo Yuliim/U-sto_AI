@@ -40,17 +40,23 @@ df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량']
 # 수량 1로 초기화 (개별 관리이므로)
 df_operation['수량'] = 1
 
-# 물품고유번호 생성 로직
-# 규칙: M + 년도(4자리) + 순번(5자리) -> 예: M201500001
-def generate_asset_id(row, idx):
-    acq_date = pd.to_datetime(row['취득일자'])
-    year_str = acq_date.strftime('%Y') # 4자리 년도 (ex: 2015)
-    seq_str = f"{idx+1:05d}"           # 5자리 순번
-    return f"M{year_str}{seq_str}"
+def generate_asset_ids(df: pd.DataFrame) -> pd.Series:
+    # 취득일자를 datetime으로 변환
+    acq_dates = pd.to_datetime(df['취득일자'])
+    # 연도(YYYY) 추출
+    year_strs = acq_dates.dt.strftime('%Y')
+    # 순번 생성 (1부터, 5자리 zero-padding)
+    seq_strs = (
+        pd.Series(np.arange(len(df)) + 1, index=df.index)
+        .astype(str)
+        .str.zfill(5)
+    )
+    # 물품고유번호 생성
+    return "M" + year_strs + seq_strs
 
 print("⚙️ [Phase 2] 개별 자산 분화 및 고유번호 생성 중...")
-# 인덱스를 활용해 고유번호 일괄 생성
-df_operation['물품고유번호'] = [generate_asset_id(row, i) for i, row in df_operation.iterrows()]
+df_operation['물품고유번호'] = generate_asset_ids(df_operation)
+
 
 # 초기 운용 상태 설정
 # 정리일자가 있으면 그때부터 '운용중', 아니면 '취득(대기)' 상태일 수 있으나, 

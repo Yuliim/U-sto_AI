@@ -20,6 +20,12 @@ try:
 except FileNotFoundError as e:
     print(f"❌ 오류: 파일이 없습니다. Phase 2를 먼저 실행해주세요. ({e})")
     exit()
+except PermissionError as e:
+    print(f"❌ 파일 접근 권한 오류: {e}")
+    exit()
+except Exception as e:
+    print(f"❌ CSV 로드 중 알 수 없는 오류: {e}")
+    exit()
 
 # 날짜 컬럼 형변환 (검증용)
 date_cols = ['취득일자', '정리일자']
