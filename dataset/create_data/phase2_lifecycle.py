@@ -63,7 +63,7 @@ df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량']
 # 수량 1로 초기화 (개별 관리이므로)
 df_operation['수량'] = 1
 
-def generate_asset_ids(df: pd.DataFrame) -> pd.Series:
+def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     # 취득일자를 datetime으로 변환
     acq_dates = pd.to_datetime(df['취득일자'])
     # 연도(YYYY) 추출
@@ -78,7 +78,7 @@ def generate_asset_ids(df: pd.DataFrame) -> pd.Series:
     return "M" + year_strs + seq_strs
 
 print("⚙️ [Phase 2] 개별 자산 분화 및 고유번호 생성 중...")
-df_operation['물품고유번호'] = generate_asset_ids(df_operation)
+df_operation['물품고유번호'] = create_asset_ids(df_operation)
 
 
 # 초기 운용 상태 설정

@@ -149,6 +149,18 @@ for i in range(TOTAL_COUNT):
         else:
             days_add = random.randint(30, 60)
         clear_date = acq_date + timedelta(days=days_add)
+
+        # 정리일자는 현재 날짜를 초과하지 않도록 제한
+        today = datetime.now().date()
+
+        if isinstance(clear_date, datetime):
+            clear_dt = clear_date.date()
+        else:
+            clear_dt = clear_date
+
+        if clear_dt is not None and clear_dt > today:
+            clear_date = today
+
     
     # 5) 수량 및 금액 생성
     # 취득 단계에서는 '묶음'으로 들어옴 (수량 N개 가능)
