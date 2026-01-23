@@ -116,8 +116,8 @@ for row in df_operation.itertuples():
     life_years = row.내용연수
 
     # [물품기본정보] 관련
-    acq_method = row.취득정리구분
-    dept_id = row.운용부서코드
+    # acq_method = row.취득정리구분
+    # dept_id = row.운용부서코드
     remark = row.비고
 
     # 정리일자 Null 처리
@@ -204,7 +204,7 @@ for row in df_operation.itertuples():
                 # ---------------반납등록목록-----------------
                 '반납일자': return_date.strftime('%Y-%m-%d'),
                 '등록일자': return_date.strftime('%Y-%m-%d'), # 등록일자 = 반납신청일
-                '반납확정일자': (return_date + timedelta(days=3)).strftime('%Y-%m-%d') if return_status == '확정' else '',
+                '반납확정일자': return_confirm_date_str.strftime('%Y-%m-%d'),
                 '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': return_status,
                 # 물품 정보
@@ -216,21 +216,30 @@ for row in df_operation.itertuples():
             }
             return_list.append(return_row)
             
+            # 반납 확정일자 : 확정일 때만 생성 (신청일 + 1~7일)
+            return_confirm_date_str = '' 
+
             if return_status == '확정':
+                random_days = random.randint(1, 7)
+                return_confirm_date = return_date + timedelta(days=random_days)
+                if return_confirm_date > today:
+                    return_confirm_date = today
+
+                return_confirm_date_str = return_confirm_date.strftime('%Y-%m-%d')
+
                 is_returned = True
                 df_operation.at[idx, '운용상태'] = '반납'
-                df_operation.at[idx, '운용부서'] = '' # 반납 시 부서 Null 처리
+                df_operation.at[idx, '운용부서'] = ''
 
-                # 이력 추가
+                # 반납 이력
                 operation_history_list.append({
                     '물품고유번호': asset_id,
-                    '변경일자': return_date.strftime('%Y-%m-%d'), # 반납일자
+                    '변경일자': return_confirm_date_str, # 반납 확정일자
                     '(이전)운용상태': '운용', '(변경)운용상태': '반납',
                     '사유': return_reason,
                     '관리자명': STAFF_USER[1], '관리자ID': STAFF_USER[0],
                     '등록자명': STAFF_USER[1], '등록자ID': STAFF_USER[0]
                 })
-
     # -------------------------------------------------------
     # 2-3. 불용 시뮬레이션 (반납 -> 불용)
     # 조건: 반납 확정된 물품 중 '폐품', '정비필요품' or 내구연한 경과품
@@ -280,19 +289,19 @@ for row in df_operation.itertuples():
             disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
             # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 1~7일)
-            confirm_date_str = '' 
+            disuse_confirm_date_str = '' 
 
             if disuse_status == '확정':
                 random_days = random.randint(1, 7)  
-                confirm_date = disuse_date + timedelta(days=random_days)  
-                confirm_date_str = confirm_date.strftime('%Y-%m-%d')  
+                disuse_confirm_date = disuse_date + timedelta(days=random_days)  
+                disuse_confirm_date_str = disuse_confirm_date.strftime('%Y-%m-%d')  
                 
             # 불용 데이터 생성
             disuse_row = {
                 # ---------------불용등록목록-----------------
                 '불용일자': disuse_date_str,
                 '등록일자': disuse_date_str,
-                '불용확정일자': confirm_date_str,
+                '불용확정일자': disuse_confirm_date_str,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1], # 관리자가 보통 처리
                 '승인상태': disuse_status,
                 # 물품 정보
@@ -308,10 +317,11 @@ for row in df_operation.itertuples():
             if disuse_status == '확정':
                 is_disused = True
                 df_operation.at[idx, '운용상태'] = '불용'
+
                 # 이력 추가
                 operation_history_list.append({
                     '물품고유번호': asset_id,
-                    '변경일자': disuse_date_str, # 불용일자 
+                    '변경일자': disuse_confirm_date_str, # 불용 확정일자
                     '(이전)운용상태': '반납', '(변경)운용상태': '불용',
                     '사유': disuse_reason,
                     '관리자명': ADMIN_USER[1], '관리자ID': ADMIN_USER[0],
@@ -349,9 +359,9 @@ for row in df_operation.itertuples():
             disposal_confirm_date_str = ''
             if disposal_status == '확정':
                 # 신청일로부터 3~7일 후 확정
-                confirm_date = disposal_date + timedelta(days=random.randint(3, 7))
-                if confirm_date > today: confirm_date = today # 미래 날짜 방지
-                disposal_confirm_date_str = confirm_date.strftime('%Y-%m-%d')
+                disposal_confirm_date = disposal_date + timedelta(days=random.randint(3, 7))
+                if disposal_confirm_date > today: disposal_confirm_date = today # 미래 날짜 방지
+                disposal_confirm_date_str = disposal_confirm_date.strftime('%Y-%m-%d')
 
             disposal_row = {
                 # ---------------처분목록-----------------
@@ -379,7 +389,7 @@ for row in df_operation.itertuples():
                 # 이력 추가
                 operation_history_list.append({
                     '물품고유번호': asset_id,
-                    '변경일자': disposal_date.strftime('%Y-%m-%d'),
+                    '변경일자': disposal_confirm_date_str, # 불용 확정일자
                     '(이전)운용상태': '불용', '(변경)운용상태': '처분',
                     '사유': f"{disposal_method} 완료",
                     '관리자명': ADMIN_USER[1], '관리자ID': ADMIN_USER[0],
@@ -409,10 +419,10 @@ if '비고' not in df_operation.columns:
     # 필요한 추가 정보를 df_acq에서 가져와서 결합
     add_info = df_acq[['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '비고', '승인상태']].drop_duplicates()
     df_operation = df_operation.merge(
-    add_info,
-    on=['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '승인상태'],
-    how='left'
-)
+        add_info,
+        on=['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '승인상태'],
+        how='left'
+    )
     # 취득일자, G2B목록번호, 취득정리구분, 운용부서코드, 승인상태를 키로 조인하여 비고 컬럼을 보정
 df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 
