@@ -7,6 +7,8 @@ LOAD_DIR = os.path.join(BASE_DIR, "data_lifecycle") # 원천 데이터
 SAVE_DIR = os.path.join(BASE_DIR, "data_view")      # 뷰 데이터 (create_data/data_view)
 os.makedirs(SAVE_DIR, exist_ok=True) # data_view 폴더 생성
 
+# 현재 유효한 상태를 의미하는 종료일 (무기한 유효)
+CURRENT_STATUS_END_DATE = pd.Timestamp('2099-12-31')
 # ---------------------------------------------------------
 # 0. 데이터 로드 (Phase 2 결과물)
 # ---------------------------------------------------------
@@ -113,8 +115,7 @@ df_hist['유효시작일자'] = df_hist['변경일자']
 # 다음 상태로 변하기 전날이 종료일
 df_hist['유효종료일자'] = df_hist.groupby('물품고유번호')['변경일자'].shift(-1) - pd.Timedelta(days=1)
 # 현재 유효한 상태(마지막 상태)는 2099년까지
-MAX_FUTURE_DATE = pd.Timestamp('2099-12-31')
-df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(MAX_FUTURE_DATE)
+df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(CURRENT_STATUS_END_DATE)
 
 # 3. 속성 정보 결합 (운용대장에서 변하지 않는 정보들)
 static_cols = [
@@ -179,7 +180,7 @@ current_snapshot_qty = pd.to_numeric(
     errors='coerce'
 )
 
-total_snap = current_snapshot_qty.sum()
+total_snap = current_snapshot_qty.sum(skipna=True)
 
 
 print(f"1. 최신 상태 동기화 검증: 운용대장({total_op}) vs 이력스냅샷({total_snap})")
