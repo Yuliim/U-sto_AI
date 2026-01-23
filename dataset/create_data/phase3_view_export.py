@@ -131,9 +131,6 @@ df_scd_raw = pd.merge(df_scd_raw, df_dept, on='물품고유번호', how='left')
 # 상태값 매핑: 이력 데이터의 '(변경)운용상태'가 그 당시의 실제 상태임
 df_scd_raw['운용상태'] = df_scd_raw['(변경)운용상태']
 
-# 그룹핑 전 NaN 처리 (필수!)
-# merge 과정에서 발생했거나 원본에 있던 NaN을 빈 문자열로 바꿔야 groupby에서 누락되지 않음
-df_scd_raw = df_scd_raw.fillna('')
 
 # 4. 그룹핑 및 수량 집계 (Aggregation)
 # 물품고유번호를 제거하고, 나머지 모든 속성이 동일한 건들을 묶어서 수량을 셉니다.
@@ -149,6 +146,9 @@ group_cols_scd = [
 # 날짜 포맷팅 (그룹핑 키로 쓰기 위해)
 df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime('%Y-%m-%d')
 df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
+
+# 그 후 NaN 처리
+df_scd_raw = df_scd_raw.fillna('')
 
 # 수량 집계 (size -> 수량)
 view_inventory_scd = df_scd_raw.groupby(group_cols_scd).size().reset_index(name='수량')
@@ -174,7 +174,13 @@ print("\n🔍 [Phase 3] 데이터 정합성 검증 시작")
 # 2099-12-31일자(현재 유효한 상태)를 필터링하여 운용대장과 비교
 current_snapshot = view_inventory_scd[view_inventory_scd['유효종료일자'] == '2099-12-31']
 total_op = len(df_op)
-total_snap = current_snapshot['수량'].sum()
+current_snapshot_qty = pd.to_numeric(
+    current_snapshot['수량'],
+    errors='coerce'
+)
+
+total_snap = current_snapshot_qty.sum()
+
 
 print(f"1. 최신 상태 동기화 검증: 운용대장({total_op}) vs 이력스냅샷({total_snap})")
 if total_op == total_snap:

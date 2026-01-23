@@ -181,14 +181,13 @@ for i in range(TOTAL_COUNT):
         p=[0.95, 0.02, 0.03]
     )
     
-    # 비고 (NLP 검색용 키워드 심기)
+    # 비고 생성
     remark = ""
-    if "GPU" in item_name:
-        remark = "AI 대학원 실습실 구축용 고성능 장비"
-    elif approval_status == '반려':
+    if approval_status == '반려':
         remark = "예산 초과로 인한 반려"
-    elif random.random() < 0.1: # 10% 확률로 비고 작성
+    elif random.random() < 0.1: # 10% 확률로 비고 추가
         remark = fake.sentence()
+
 
     # 7) 리스트에 추가 (매뉴얼 속성 매핑)
     row = {

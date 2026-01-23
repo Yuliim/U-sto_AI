@@ -378,8 +378,6 @@ for row in df_operation.itertuples():
                 df_operation.at[idx, '운용상태'] = '처분' # 매뉴얼상 처분 완료되면 목록에서 사라지거나 상태 변경
                 # 이력 추가
                 operation_history_list.append({
-                    'G2B목록명': g2b_name,
-                    'G2B목록번호': g2b_full_code,
                     '물품고유번호': asset_id,
                     '변경일자': disposal_date.strftime('%Y-%m-%d'),
                     '(이전)운용상태': '불용', '(변경)운용상태': '처분',
@@ -410,8 +408,12 @@ cols_operation = [
 if '비고' not in df_operation.columns:
     # 필요한 추가 정보를 df_acq에서 가져와서 결합
     add_info = df_acq[['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '비고', '승인상태']].drop_duplicates()
+    df_operation = df_operation.merge(
+    add_info,
+    on=['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '승인상태'],
+    how='left'
+)
     # 취득일자, G2B목록번호, 취득정리구분, 운용부서코드, 승인상태를 키로 조인하여 비고 컬럼을 보정
-    pass
 df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 
 # [04-03] 반납 관련
