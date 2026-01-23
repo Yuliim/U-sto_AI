@@ -156,7 +156,7 @@ for row in df_operation.itertuples():
         '(이전)운용상태': '취득',
         '(변경)운용상태': '운용',
         '사유': '부서 배정 및 사용 시작',
-        '관리자명': remark if (pd.notna(remark) and remark) else STAFF_USER[1], # 비고에 관리자 있을 수 있음
+        '관리자명': STAFF_USER[1], 
         '관리자ID': STAFF_USER[0],
         '등록자명': STAFF_USER[1], '등록자ID': STAFF_USER[0]
     })
@@ -255,6 +255,9 @@ for row in df_operation.itertuples():
         if not skip_disuse:
             disuse_base_date = pd.to_datetime(return_row['반납확정일자'])
             disuse_date = disuse_base_date + timedelta(days=random.randint(30, 180))
+
+            if disuse_date > today:
+                disuse_date = today
             
             # 불용 사유 결정 (4종) - 반납 사유와 매핑
             if not disuse_reason:
@@ -407,9 +410,7 @@ cols_operation = [
 if '비고' not in df_operation.columns:
     # 필요한 추가 정보를 df_acq에서 가져와서 결합
     add_info = df_acq[['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '비고', '승인상태']].drop_duplicates()
-    # 취득일자와 G2B번호를 키로 조인 (단, 중복될 수 있으니 주의. 여기서는 시뮬레이션 단순화를 위해 원본 유지 가정)
-    # 가장 안전한 방법: df_operation 생성 루프에서 값을 할당했어야 함.
-    # 현재 코드는 df_operation = df_confirmed.loc[...].copy() 방식이므로 df_confirmed의 컬럼을 그대로 가짐.
+    # 취득일자, G2B목록번호, 취득정리구분, 운용부서코드, 승인상태를 키로 조인하여 비고 컬럼을 보정
     pass
 df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 

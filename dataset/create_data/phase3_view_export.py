@@ -20,7 +20,7 @@ try:
     df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
 
     # 데이터 프레임 전체의 NaN(결측치)를 빈 문자열로 치환
-    # 이를 수행하지 않으면 groupby 시 '비고'나 '부서'가 없는 데이터가 모두 누락됨 (41005 -> 2333 발생 원인)
+    # groupby는 NaN 값을 가진 행을 제외하므로, '비고'나 '부서' 값이 비어 있는 행이 누락되지 않도록 사전에 치환
     df_op = df_op.fillna('')
     df_rt = df_rt.fillna('')
     df_du = df_du.fillna('')
@@ -171,7 +171,7 @@ print("   -> [완료] 'View_07_01_보유현황_이력기반.csv' 생성됨. (기
 print("\n🔍 [Phase 3] 데이터 정합성 검증 시작")
 
 # 검증 1: 이력 기반 데이터 검증 (최신 상태가 운용대장과 일치하는지)
-# 9999-12-31일자(현재 유효한 상태)를 필터링하여 운용대장과 비교
+# 2099-12-31일자(현재 유효한 상태)를 필터링하여 운용대장과 비교
 current_snapshot = view_inventory_scd[view_inventory_scd['유효종료일자'] == '2099-12-31']
 total_op = len(df_op)
 total_snap = current_snapshot['수량'].sum()
@@ -185,16 +185,18 @@ else:
 # 검증 2: 날짜 논리 확인 (취득일자 < 불용일자)
 # 불용 목록에서 샘플링하여 확인
 print("2. 날짜 논리 검증 (취득일자 < 불용일자)")
-error_count = 0
-for _, row in df_du.iterrows():
-    if not row['취득일자'] or not row['불용일자']:
-        continue
-    acq_d = pd.to_datetime(row['취득일자'], errors='coerce')
-    du_d = pd.to_datetime(row['불용일자'], errors='coerce')
-    if pd.isna(acq_d) or pd.isna(du_d):
-        continue
-    if du_d < acq_d:
-        error_count += 1
+df_du_dates = df_du[['취득일자', '불용일자']].apply(pd.to_datetime, errors='coerce')
+
+valid_mask = (
+    df_du_dates['취득일자'].notna() &
+    df_du_dates['불용일자'].notna()
+)
+
+error_count = (
+    df_du_dates.loc[valid_mask, '불용일자'] <
+    df_du_dates.loc[valid_mask, '취득일자']
+).sum()
+
 
 
 if error_count == 0:
@@ -222,4 +224,4 @@ print("   생성된 파일 목록:")
 print("   - View_04_03_반납등록목록.csv / View_04_03_반납물품목록.csv")
 print("   - View_05_01_불용등록목록.csv / View_05_01_불용물품목록.csv")
 print("   - View_06_01_처분목록.csv / View_06_01_처분물품목록.csv")
-print("   - View_07_01_보유현황.csv")
+print("   - View_07_01_보유현황_이력기반.csv")

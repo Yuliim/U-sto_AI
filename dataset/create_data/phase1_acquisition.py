@@ -164,11 +164,10 @@ for i in range(TOTAL_COUNT):
     total_amount = (total_amount // 1000) * 1000 # 1000원 단위 절삭
     
     # 6) 기타 속성 (취득정리구분)
-    acq_method = random.choices(  # 가중치 기반으로 1개 선택
-        population=['자체구입', '자체제작', '기증'],  # 선택 후보 목록
-        weights=[0.95, 0.02, 0.03],  # 확률을 실수로 직접 표현
-        k=1  # 1개 선택
-    )[0]  # 첫 원소 추출
+    acq_method = np.random.choice(
+        ['자체구입', '자체제작', '기증'],
+        p=[0.95, 0.02, 0.03]
+    )
     
     # 비고 (NLP 검색용 키워드 심기)
     remark = ""
@@ -186,9 +185,9 @@ for i in range(TOTAL_COUNT):
         'G2B_목록명': item_name,
         # G2B 상세 (조회용)
         '물품분류코드': class_code,
-        '물품분류명': class_name,# 통신서버소프트웨어
+        '물품분류명': class_name,
         '물품식별코드': id_code,
-        '물품품목명': item_name, # 통신소프트웨어, 핸디소프트, 문서 24 연계 모듈 v1, 연계모듈
+        '물품품목명': item_name, 
         
         # 취득 정보
         '취득일자': acq_date,
