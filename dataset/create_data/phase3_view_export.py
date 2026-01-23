@@ -17,6 +17,8 @@ try:
     df_rt = pd.read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))
     df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
     df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))    # 처분
+    # 이력 데이터 로드 (보유현황 구성을 위해 필수)
+    df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
 except FileNotFoundError as e:
     print(f"❌ 오류: 파일이 없습니다. Phase 2를 먼저 실행해주세요. ({e})")
     exit()
@@ -71,35 +73,63 @@ view_dp_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_처분물품목록.csv'),
 
 
 # [07-01] 보유 현황 조회 (Aggregation)
-# "수량" 컬럼이 필요하므로, 개별 자산을 그룹핑하여 카운트해야 함
-# 기준: G2B번호, 취득일자, 부서, 상태 등이 같으면 같은 묶음으로 간주
-print("   - 보유 현황 집계(Grouping) 중...")
+# "특정 시점을 조회했을 때 그 당시의 수량이 나와야 한다."
+# 해결책: 단순히 현재 상태를 카운트하는 것이 아니라, 이력(History) 데이터를 가공하여
+#         각 자산이 '언제부터(StartDate) 언제까지(EndDate) 어떤 상태(Status)였는지'를 기록한 데이터를 생성합니다.
+#         시스템(UI)에서는 이 테이블을 조회 기간과 비교(Between)하여 카운트하면 됩니다.
+print("   - 보유 현황(과거 시점 조회용) 데이터 생성 중...")
 
-# [핵심 수정] NaN 값을 빈 문자열로 치환하여 groupby 시 누락 방지
-# 운용부서가 없는(반납/불용/처분) 데이터도 카운트에 포함되어야 함
-df_op_filled = df_op.fillna("")
+# 1. 이력 데이터 정렬 (물품별, 날짜순)
+df_hist['변경일자'] = pd.to_datetime(df_hist['변경일자'])
+df_hist = df_hist.sort_values(by=['물품고유번호', '변경일자'])
 
-group_cols = ['G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
-              '운용부서', '운용상태', '내용연수']
+# 2. 유효 기간(Start ~ End) 생성
+# StartDate: 변경일자
+# EndDate: 다음 상태로 변경되기 전날 (현재 상태면 9999-12-31)
+df_hist['유효시작일자'] = df_hist['변경일자']
+df_hist['유효종료일자'] = df_hist.groupby('물품고유번호')['변경일자'].shift(-1) - pd.Timedelta(days=1)
 
-# NaN 값이 그룹핑 과정에서 자동으로 제외되지 않도록 사전에 fillna로 처리하여 일관된 집계를 수행함
-view_inventory = df_op_filled.groupby(group_cols).size().reset_index(name='수량')
-view_inventory.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황.csv'), index=False, encoding='utf-8-sig')
+# 마지막 상태(현재까지 유효함)는 종료일자를 먼 미래로 설정
+df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(pd.Timestamp('2099-12-31'))
+
+# 3. 필요한 정보 조인 (G2B목록번호 등)
+# 물품고유번호를 기준으로 기본 정보(G2B정보, 취득금액 등)를 붙여줍니다.
+df_info = df_op[['물품고유번호', 'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '내용연수']]
+df_scd = pd.merge(df_hist, df_info, on='물품고유번호', how='left')
+
+# 4. 컬럼 정리 및 저장
+# 이 테이블을 사용하면 SQL 쿼리 등으로 "WHERE 유효시작일자 <= '2024-01-01' AND 유효종료일자 >= '2024-01-01'"
+# 조건을 걸어 2024년 1월 1일 당시의 보유 수량(상태별 카운트)을 정확히 뽑을 수 있습니다.
+view_inventory_scd = df_scd[[
+    'G2B_목록번호', 'G2B_목록명', '물품고유번호', 
+    '취득일자', '취득금액', '내용연수',
+    '(변경)운용상태',  # 당시 상태 (운용, 반납, 불용 등)
+    '유효시작일자', '유효종료일자'
+]].copy()
+
+# CSV 저장 시 날짜 포맷 정리
+view_inventory_scd['유효시작일자'] = view_inventory_scd['유효시작일자'].dt.strftime('%Y-%m-%d')
+view_inventory_scd['유효종료일자'] = view_inventory_scd['유효종료일자'].dt.strftime('%Y-%m-%d')
+
+view_inventory_scd.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황_이력기반.csv'), index=False, encoding='utf-8-sig')
+
+print("   -> [완료] 'View_07_01_보유현황_이력기반.csv' 생성됨. (기간 조회용)")
 # ---------------------------------------------------------
 # 2. 데이터 정합성 검증 (Validation)
 # ---------------------------------------------------------
 print("\n🔍 [Phase 3] 데이터 정합성 검증 시작")
 
-# 검증 1: 수량 일치 여부
-# 운용대장의 전체 행 수 vs 보유현황의 수량 총합
-total_assets_op = len(df_op)
-total_assets_inv = view_inventory['수량'].sum()
+# 검증 1: 이력 기반 데이터 검증 (최신 상태가 운용대장과 일치하는지)
+# 9999-12-31일자(현재 유효한 상태)를 필터링하여 운용대장과 비교
+current_snapshot = view_inventory_scd[view_inventory_scd['유효종료일자'] == '2099-12-31']
+total_op = len(df_op)
+total_snap = len(current_snapshot)
 
-print(f"1. 수량 검증: 운용대장({total_assets_op}) vs 보유현황합계({total_assets_inv})")
-if total_assets_op == total_assets_inv:
-    print("   ✅ PASS: 총 수량이 정확히 일치합니다.")
+print(f"1. 최신 상태 동기화 검증: 운용대장({total_op}) vs 이력스냅샷({total_snap})")
+if total_op == total_snap:
+    print("   ✅ PASS: 이력 데이터의 최신 상태가 운용대장과 정확히 일치합니다.")
 else:
-    print("   ❌ FAIL: 수량이 불일치합니다.")
+    print("   ❌ FAIL: 데이터 불일치 발생.")
 
 # 검증 2: 날짜 논리 확인 (취득일자 < 불용일자)
 # 불용 목록에서 샘플링하여 확인

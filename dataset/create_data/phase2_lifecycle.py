@@ -375,6 +375,8 @@ for row in df_operation.itertuples():
                 df_operation.at[idx, '운용상태'] = '처분' # 매뉴얼상 처분 완료되면 목록에서 사라지거나 상태 변경
                 # 이력 추가
                 operation_history_list.append({
+                    'G2B목록명': g2b_name,
+                    'G2B목록번호': g2b_full_code,
                     '물품고유번호': asset_id,
                     '변경일자': disposal_date.strftime('%Y-%m-%d'),
                     '(이전)운용상태': '불용', '(변경)운용상태': '처분',
