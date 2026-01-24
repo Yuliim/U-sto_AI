@@ -186,6 +186,10 @@ acquisition_list = []
 
 print(f"🚀 [Phase 1] 물품 취득 데이터 {TOTAL_COUNT}건 생성을 시작합니다...")
 
+# [수정] 기준일자 (Today)를 datetime 객체로 생성 (시간은 00:00:00)
+now = datetime.now()
+today = datetime(now.year, now.month, now.day)
+
 for i in range(TOTAL_COUNT):
     # 1) 기본 정보 선택
     g2b_item = random.choice(G2B_MASTER_DATA)
@@ -199,17 +203,19 @@ for i in range(TOTAL_COUNT):
     approval_status = np.random.choice(APPROVAL_STATUSES, p=APPROVAL_RATIOS)
     
     # 3) 날짜 생성 로직
-    # 기준: 2015-01-01 ~ 2025-12-31
+    # 기준: 2015-01-01 ~ 현재
     start_date_range = datetime(2015, 1, 1)
-    end_date_range = datetime.now()
     
     # '대기' 상태는 최근(2024년 10월 이후)에 몰려있도록 설정
     if approval_status == '대기':
         wait_start = datetime(2024, 10, 1)
-        acq_date = fake.date_between(start_date=wait_start, end_date=datetime.now())
+        temp_date = fake.date_between(start_date=wait_start, end_date=today)
     else:
-        acq_date = fake.date_between(start_date=start_date_range, end_date=end_date_range)
+        temp_date = fake.date_between(start_date=start_date_range, end_date=today)
     
+    # [수정] 내부 계산용 변수는 무조건 datetime 객체로 변환
+    acq_date = datetime(temp_date.year, temp_date.month, temp_date.day)
+
     # 4) 정리일자 생성
     # 확정: 취득일 + (1일~7일) 혹은 (1달~2달)
     # 대기/반려: NULL (None)
@@ -220,19 +226,12 @@ for i in range(TOTAL_COUNT):
             days_add = random.randint(1, 7)
         else:
             days_add = random.randint(30, 60)
+        # datetime + timedelta = datetime (안전함)  
         clear_date = acq_date + timedelta(days=days_add)
 
         # 정리일자는 현재 날짜를 초과하지 않도록 제한
-        today = datetime.now().date()
-
-        if isinstance(clear_date, datetime):
-            clear_dt = clear_date.date()
-        else:
-            clear_dt = clear_date
-
-        if clear_dt is not None and clear_dt > today:
+        if clear_date > today:
             clear_date = today
-
     
     # 5) 수량 및 금액 생성
     # 취득 단계에서는 '묶음'으로 들어옴 (수량 N개 가능)
@@ -262,6 +261,9 @@ for i in range(TOTAL_COUNT):
         if candidates:
             remark = random.choice(candidates)
 
+    # [수정] 저장 시점에 문자열 변환
+    acq_date_str = acq_date.strftime('%Y-%m-%d')
+    clear_date_str = clear_date.strftime('%Y-%m-%d') if clear_date else ""
 
     # 7) 리스트에 추가 (매뉴얼 속성 매핑)
     row = {
@@ -275,9 +277,9 @@ for i in range(TOTAL_COUNT):
         '물품품목명': item_name, 
         
         # 취득 정보
-        '취득일자': acq_date,
+        '취득일자': acq_date_str,
         '취득금액': total_amount,
-        '정리일자': clear_date,
+        '정리일자': clear_date_str,
         '취득정리구분': acq_method,
         
         # 관리 정보
@@ -293,12 +295,6 @@ for i in range(TOTAL_COUNT):
 
 # DataFrame 변환
 df_acquisition = pd.DataFrame(acquisition_list)
-
-# 날짜 포맷팅 (YYYY-MM-DD)
-df_acquisition['취득일자'] = pd.to_datetime(df_acquisition['취득일자']).dt.strftime('%Y-%m-%d')
-df_acquisition['정리일자'] = pd.to_datetime(df_acquisition['정리일자']).dt.strftime('%Y-%m-%d')
-df_acquisition['정리일자'] = df_acquisition['정리일자'].replace('NaT', '') # NULL 처리
-
 # ---------------------------------------------------------
 # 3. 결과 저장 (CSV Export)
 # ---------------------------------------------------------

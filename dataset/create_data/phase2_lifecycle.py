@@ -1,7 +1,6 @@
 import os
 import pandas as pd
 import numpy as np
-from faker import Faker
 import random
 from datetime import datetime, timedelta
 
@@ -11,8 +10,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
-fake = Faker('ko_KR')
-
 # Phase 1 결과물 로드
 try:
     file_path = os.path.join(DATA_DIR, '03_01_acquisition_master.csv')
@@ -98,8 +95,9 @@ return_list = [] # 반납 목록
 disuse_list = [] # 불용 목록
 disposal_list = [] # 처분 목록
 
-# 현재 시점 (Today)
-today = datetime.now().date()
+# [수정] 기준일자: 시간 성분 포함한 datetime (00:00:00)
+now = datetime.now()
+today = datetime(now.year, now.month, now.day)
 
 print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (반납/불용/처분)...")
 
@@ -112,6 +110,7 @@ for row in df_operation.itertuples():
     g2b_full_code = row.G2B_목록번호
     g2b_name = row.G2B_목록명
     asset_id = row.물품고유번호
+    # [수정] 계산용 변수는 pd.to_datetime 결과(Timestamp=datetime호환) 그대로 사용
     acq_date = pd.to_datetime(row.취득일자)
     total_amount = row.취득금액
     dept_name = row.운용부서
@@ -140,7 +139,7 @@ for row in df_operation.itertuples():
     # 정리일자에 '취득' 상태 기록
     operation_history_list.append({
         '물품고유번호': asset_id,
-        '변경일자': clear_date.strftime('%Y-%m-%d'),
+        '변경일자': clear_date.strftime('%Y-%m-%d'), # 정리일자(취득 확정일자)
         '(이전)운용상태': '-',
         '(변경)운용상태': '취득',
         '사유': '신규 취득',
@@ -148,17 +147,13 @@ for row in df_operation.itertuples():
         '등록자명': STAFF_USER[1], '등록자ID': STAFF_USER[0]
     })
     
-    # 정리일자 직후 '운용'으로 변경된다고 가정
-    use_start_date = clear_date + timedelta(days=random.randint(0, 3))
-    df_operation.at[idx, '운용상태'] = '운용' # 현재 상태 업데이트
-    
     # 출력상태 생성 (출력 20%, 미출력 80%)
     print_status = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
     df_operation.at[idx, '출력상태'] = print_status
 
     operation_history_list.append({
         '물품고유번호': asset_id,
-        '변경일자': use_start_date.strftime('%Y-%m-%d'),
+        '변경일자': clear_date.strftime('%Y-%m-%d'), # 운용 시작일자(=정리일자)
         '(이전)운용상태': '취득',
         '(변경)운용상태': '운용',
         '사유': '부서 배정 및 사용 시작',
@@ -179,7 +174,7 @@ for row in df_operation.itertuples():
     
     # 확률적 반납 결정 (내구연한 도래 여부와 관계없이 발생 가능)
     # 오래된 물건일수록 반납 확률 증가
-    age_days = (today - acq_date.date()).days
+    age_days = (today - acq_date).days
 
     # 반납 확률 로직
     prob_return = 0.0
@@ -188,12 +183,12 @@ for row in df_operation.itertuples():
     
     if random.random() < prob_return:
         # 반납 발생!
-        # 반납 시점: 운용 시작일 ~ 오늘 사이 랜덤, 단 최소 1년은 썼다고 가정
-        days_since_use_start = (today - use_start_date.date()).days
+        # 반납 시점: 정리일자 ~ 오늘 사이 랜덤, 단 최소 1년은 썼다고 가정
+        days_since_use_start = (today - clear_date).days
 
         if age_days >= 365 and days_since_use_start >= 365:
             max_days = min(age_days, days_since_use_start)
-            return_date = use_start_date + timedelta(
+            return_date = clear_date + timedelta(
                 days=random.randint(365, max_days)
     )
             # 반납 사유 결정
@@ -213,7 +208,7 @@ for row in df_operation.itertuples():
 
             if return_status == '확정':
                 random_days = random.randint(1, 7)
-                return_confirm_date = (return_date + timedelta(days=random_days)).date()
+                return_confirm_date = (return_date + timedelta(days=random_days))
 
                 if return_confirm_date > today:
                     return_confirm_date = today
@@ -249,6 +244,7 @@ for row in df_operation.itertuples():
                 '정리일자': clear_date_str, # 취득 시 정리일자  
                 '운용부서': dept_name, '운용상태': df_operation.at[idx, '운용상태'], '물품상태': item_condition, '사유': return_reason
             }
+            # 반납 데이터 생성 (승인상태 무관, 신청 이력 관리 목적)
             return_list.append(return_row)
             
     # -------------------------------------------------------
@@ -259,7 +255,7 @@ for row in df_operation.itertuples():
     disuse_date = None
     disuse_row = None
     
-    if is_returned and return_row and return_row.get('반납확정일자', '') != '':
+    if is_returned and return_confirm_date is not None:
         # 잉여물품 + 신품인 경우 불용 스킵(보관) 로직
         skip_disuse = False
         disuse_reason = ''
@@ -273,12 +269,12 @@ for row in df_operation.itertuples():
                 disuse_reason = '활용부서부재' # 10% 불용 진행
         
         if not skip_disuse:
-            disuse_base_date = pd.to_datetime(return_row['반납확정일자'])
+            disuse_base_date = return_confirm_date
             disuse_date = disuse_base_date + timedelta(days=random.randint(30, 180))
 
-            # disuse_date는 datetime → date로 비교
-            if disuse_date.date() > today:
-                disuse_date = datetime.combine(today, datetime.min.time())
+            # disuse_date는 datetime
+            if disuse_date > today:
+                disuse_date = today
             
             # 불용 사유 결정 (4종) - 반납 사유와 매핑
             if not disuse_reason:
@@ -306,6 +302,9 @@ for row in df_operation.itertuples():
             if disuse_status == '확정':
                 random_days = random.randint(1, 7)  
                 disuse_confirm_date = disuse_date + timedelta(days=random_days)  
+                if disuse_confirm_date > today:
+                    disuse_confirm_date = today
+                
                 disuse_confirm_date_str = disuse_confirm_date.strftime('%Y-%m-%d')  
                 
             # 불용 데이터 생성
@@ -344,11 +343,11 @@ for row in df_operation.itertuples():
     # 2-4. 처분 시뮬레이션 (불용 -> 처분)
     # 조건: 불용 확정된 물품은 무조건 처분 (매각/폐기)
     # -------------------------------------------------------
-    if is_disused and disuse_row and disuse_row.get('불용확정일자', '') != '':
-        disposal_base_date = pd.to_datetime(disuse_row['불용확정일자'])
+    if is_disused and disuse_confirm_date is not None:
+        disposal_base_date = disuse_confirm_date
         disposal_date = disposal_base_date + timedelta(days=random.randint(14, 60))
         
-        if disposal_date.date() <= today:
+        if disposal_date <= today:
             # 물품 상태에 따른 처분정리구분 결정
             # 상태가 좋음(신품, 중고품) -> 주로 '매각'
             # 상태가 나쁨(정비필요품, 폐품) -> 주로 '폐기'
@@ -372,8 +371,8 @@ for row in df_operation.itertuples():
             if disposal_status == '확정':
                 # 신청일로부터 3~7일 후 확정
                 disposal_confirm_date = disposal_date + timedelta(days=random.randint(3, 7))
-                if disposal_confirm_date.date() > today: 
-                    disposal_confirm_date = datetime.combine(today, datetime.min.time()) # 미래 날짜 방지
+                if disposal_confirm_date > today: 
+                    disposal_confirm_date = today # 미래 날짜 방지
                 disposal_confirm_date_str = disposal_confirm_date.strftime('%Y-%m-%d')
 
             disposal_row = {
