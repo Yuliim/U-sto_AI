@@ -15,8 +15,8 @@ os.makedirs(SAVE_DIR, exist_ok=True) # 폴더가 없으면 생성
 fake = Faker('ko_KR')  # 한국어 더미 데이터 생성기
 TOTAL_COUNT = 5000     # 생성할 데이터 개수 (약 5000건)
 
-# 승인 상태 비율 설정 (확정 89%, 대기 10%, 반려 1%)
-APPROVAL_RATIOS = [0.89, 0.10, 0.01]
+# 승인 상태 비율 설정 (확정 97%, 대기 2%, 반려 1%)
+APPROVAL_RATIOS = [0.97, 0.02, 0.01]
 APPROVAL_STATUSES = ['확정', '대기', '반려']
 REMARK_TEMPLATES_BY_CLASS = {
     # IT / 전산 장비
@@ -227,18 +227,6 @@ for i in range(TOTAL_COUNT):
         if clear_date > today:
             clear_date = today
     
-    '''
-    return_confirm_date_str = '' 
-
-            if return_status == '확정':
-                random_days = random.randint(1, 7)
-                return_confirm_date = (return_date + timedelta(days=random_days))
-
-                if return_confirm_date > today:
-                    return_confirm_date = today
-
-                return_confirm_date_str = return_confirm_date.strftime('%Y-%m-%d')
-                '''
     # 5) 수량 및 금액 생성
     # 취득 단계에서는 '묶음'으로 들어옴 (수량 N개 가능)
     # PC/노트북은 보통 1~10대, 책상은 10~50대 등 품목별 차이 반영
