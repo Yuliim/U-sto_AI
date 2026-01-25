@@ -214,11 +214,11 @@ for row in df_operation.itertuples():
                 return_date = fake.date_between(start_date=RECENT_WAIT_START, end_date=today)
                 return_date = datetime(return_date.year, return_date.month, return_date.day)
 
-            # 반납 확정일자 : 확정일 때만 생성 (신청일 + 1~7일)
+            # 반납 확정일자 : 확정일 때만 생성 (신청일 + 3일 ~ 2주)
             return_confirm_date_str = '' 
 
             if return_status == '확정':
-                random_days = random.randint(1, 7)
+                random_days = random.randint(3, 14)
                 return_confirm_date = (return_date + timedelta(days=random_days))
 
                 if return_confirm_date > today:
@@ -244,7 +244,6 @@ for row in df_operation.itertuples():
             return_row = {
                 # ---------------반납등록목록-----------------
                 '반납일자': return_date.strftime('%Y-%m-%d'),
-                '등록일자': return_date.strftime('%Y-%m-%d'), # 등록일자 = 반납신청일
                 '반납확정일자': return_confirm_date_str,
                 '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': return_status,
@@ -307,9 +306,9 @@ for row in df_operation.itertuples():
                 temp_date = fake.date_between(start_date=RECENT_WAIT_START, end_date=today)
                 disuse_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
-            # 불용일자(=등록일자)와 확정일자 계산 로직 분리
+            # 불용일자와 확정일자 계산 로직 분리
 
-            # 1. 불용일자(등록일자): 승인 상태와 무관하게 신청 날짜로 고정
+            # 1. 불용일자: 승인 상태와 무관하게 신청 날짜로 고정
             disuse_date_str = disuse_date.strftime('%Y-%m-%d')
             
             # 2. 불용확정일자: 확정일 때만 생성 (신청일 + 1~7일)
@@ -327,7 +326,6 @@ for row in df_operation.itertuples():
             disuse_row = {
                 # ---------------불용등록목록-----------------
                 '불용일자': disuse_date_str,
-                '등록일자': disuse_date_str,
                 '불용확정일자': disuse_confirm_date_str,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1], # 관리자가 보통 처리
                 '승인상태': disuse_status,
@@ -399,7 +397,6 @@ for row in df_operation.itertuples():
             disposal_row = {
                 # ---------------처분목록-----------------
                 '처분일자': disposal_date.strftime('%Y-%m-%d'),
-                '등록일자': disposal_date.strftime('%Y-%m-%d'),
                 '처분정리구분': disposal_method,
                 '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
                 '승인상태': disposal_status,
