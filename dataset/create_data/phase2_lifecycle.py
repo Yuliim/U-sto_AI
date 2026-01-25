@@ -39,11 +39,12 @@ PROB_RETURN_OVER_5Y = 0.6
 REASONS_RETURN = ['사용연한경과', '고장/파손', '불용결정', '사업종료', '잉여물품']
 PROBS_RETURN_REASON = [0.4, 0.2, 0.2, 0.1, 0.1]
 
-# 승인 상태 확률 (확정, 대기, 반려) - 공통
+# 승인 상태 (확정, 대기, 반려)
 STATUS_CHOICES = ['확정', '대기', '반려']
 # 최근 대기 상태 몰림 기준일
 RECENT_WAIT_START = datetime(2024, 10, 1)  # 2024-10 이후
-PROBS_STATUS_RETURN = [0.90, 0.095, 0.005]
+# 각 단계별 승인 상태 확률
+PROBS_STATUS_RETURN = [0.85, 0.1, 0.05] 
 PROBS_STATUS_DISUSE = [0.70, 0.25, 0.05]
 PROBS_STATUS_DISPOSAL = [0.90, 0.08, 0.02]
 
