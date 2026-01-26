@@ -123,10 +123,25 @@ def build_faq_prompt(question: str) -> str:
     if not faq_data:
         return "" 
 
+    # get_relevant_faq_string가 전체 FAQ 목록을 반환하는 경우
+    # (예: "[FAQ 전체 내용 목록]"으로 시작)와 질문 연관 FAQ만 반환하는
+    # 경우를 구분하여 안내 문구를 다르게 구성한다.
+    is_full_list = faq_data.lstrip().startswith("[FAQ 전체 내용 목록]")
+    if is_full_list:
+        header = "[FAQ 지식 베이스 (전체 목록)]"
+        description = (
+            "전체 FAQ 목록이 제공되었습니다.\n"
+            "사용자 요청을 충실히 반영하면서, 필요할 경우 아래 FAQ 목록을 참고하여 답변하세요."
+        )
+    else:
+        header = "[FAQ 지식 베이스 (관련 내용)]"
+        description = (
+            "사용자 질문과 연관된 FAQ 내용이 발견되었습니다.\n"
+            "아래 내용을 참고하여 답변하세요."
+        )
     return textwrap.dedent(f"""
-    [FAQ 지식 베이스 (관련 내용)]
-    사용자 질문과 연관된 FAQ 내용이 발견되었습니다. 
-    아래 내용을 참고하여 답변하세요.
+    {header}
+    {description}
 
     {faq_data}
     """)
