@@ -99,11 +99,11 @@ def get_relevant_faq_string(user_question: str) -> str:
     # "FAQ 보여줘" -> 질문(Q) 목록만 요약해서 보여줌
     list_keywords = ["faq", "자주묻는", "질문리스트", "질문목록"]
     if any(k in norm_question for k in list_keywords):
-        # [최적화] 리스트에 모은 뒤 join 수행
-        lines = ["[FAQ 전체 질문 목록]"]
+        formatted_blocks = ["[FAQ 전체 내용 목록]"]
         for item in _FAQ_CACHE_DATA:
-            lines.append(f"- {item['question']}")
-        return "\n".join(lines)
+            # 질문과 답변 쌍을 모두 추가
+            formatted_blocks.append(f"Q: {item['question']}\nA: {item['answer']}")
+        return "\n\n".join(formatted_blocks)
 
     # 3. [키워드 매칭]
     matched_items = []
