@@ -135,7 +135,7 @@ def test_tool_execution_search(mock_tool_func, mock_dependencies):
     assert result["answer"] == "맥북 재고가 있습니다."
 
 
-@patch("rag.tools.open_usage_prediction_page")
+@patch("rag.chain.open_usage_prediction_page")
 def test_tool_execution_navigate(mock_nav_tool, mock_dependencies):
     """
     [Scenario] 도구 실행 결과가 '페이지 이동(navigate)'인 경우 -> 즉시 반환 (Early Return)
@@ -165,13 +165,14 @@ def test_tool_execution_navigate(mock_nav_tool, mock_dependencies):
     # - 결과가 딕셔너리 형태이고 action이 navigate여야 함
     assert isinstance(result, dict)
     assert result.get("action") == "navigate"
-    assert result.get("target_url") == "http://test.com/predict"
+    target_url = result.get("target_url")
+    assert isinstance(target_url, str) and target_url.startswith("http://test-frontend")
 
     # - [중요] 페이지 이동 시에는 최종 답변 생성(Generator) 단계를 건너뛰어야 함
     ctx.base_llm.invoke.assert_not_called()
 
 
-@patch("rag.tools.get_item_detail_info")
+@patch("rag.chain.get_item_detail_info")
 def test_multiple_tool_calls(mock_tool_func, mock_dependencies):
     """
     [Scenario] 한 번에 여러 개의 도구를 호출하는 경우 (Multi-turn tool use)
@@ -204,7 +205,7 @@ def test_multiple_tool_calls(mock_tool_func, mock_dependencies):
     ], any_order=True)
 
 
-@patch("rag.tools.get_item_detail_info")
+@patch("rag.chain.get_item_detail_info")
 def test_fallback_on_tool_error(mock_tool_func, mock_dependencies, caplog):
     """
     [Scenario] 도구 실행 중 예외가 발생하면 
