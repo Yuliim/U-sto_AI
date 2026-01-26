@@ -87,14 +87,15 @@ def run_rag_chain(
                     if (
                         isinstance(parsed_output, dict)
                         and parsed_output.get("action") == "navigate"
-                        and "target_url" in parsed_output
+                        and parsed_output.get("target_url") == "/ai-prediction" # 특정 페이지로 제한
                     ):
-                        logger.info("[Tool Output] 페이지 이동(Navigation) 요청 감지 -> 즉시 반환")
-                        navigation_response = {
-                            "answer": "페이지 이동을 진행합니다.",
-                            **parsed_output,
+                        logger.info("[Tool Output] 사용주기 AI 예측 페이지 이동 요청 감지 -> 프롬프트 포함하여 반환")
+                        return {
+                            "answer": "사용주기 AI 예측 페이지로 이동합니다.",
+                            "target_url": parsed_output.get("target_url"),
+                            "query": user_query, # 여기서 원래 사용자의 질문을 실어줍니다!
+                            "action": "navigate"
                         }
-                        return navigation_response
 
                     # (B) 일반 정보 조회(Search) 결과 처리
                     logger.info(f"[Tool Output] 데이터 조회 완료. (메시지 이력에 추가)")
