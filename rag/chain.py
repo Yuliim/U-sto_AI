@@ -1,13 +1,14 @@
 import traceback
 import logging
+import json
 
-from langchain_core.messages import HumanMessage
-
+from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from vectorstore.retriever import retrieve_docs
-from rag.prompt import assemble_prompt, build_question_classifier_prompt, build_query_refine_prompt
+from rag.prompt import assemble_prompt, build_question_classifier_prompt, build_query_refine_prompt, build_tool_aware_system_prompt
+from rag.tools import get_item_detail_info, open_usage_prediction_page
 from rag.reranker import CrossEncoderReranker
 from app.config import (
     NO_CONTEXT_RESPONSE, TECHNICAL_ERROR_RESPONSE, SIMILARITY_SCORE_THRESHOLD, TOP_N_CONTEXT, RETRIEVER_TOP_K,
@@ -27,6 +28,125 @@ def run_rag_chain(
     user_query: str,
     retriever_top_k: int = RETRIEVER_TOP_K
 ):
+    # Function Calling (도구 사용) 우선 확인
+    try:
+        # 1. 도구 정의 및 바인딩
+        tools = [get_item_detail_info, open_usage_prediction_page]
+        
+        # 도구 이름으로 객체를 빠르게 찾기 위한 매핑 (Look-up Optimization)
+        tool_map = {tool.name: tool for tool in tools}
+        
+        # LLM에 도구 바인딩 (이 LLM은 도구를 '호출'할 수 있는 상태)
+        llm_with_tools = llm.bind_tools(tools)
+        
+        # 2. 시스템 프롬프트 구성 (도구 사용 가이드라인 주입)
+        system_instruction = build_tool_aware_system_prompt()
+        
+        messages = [
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=user_query)
+        ]
+        
+        # 3. Router 단계: 도구 사용 여부 판단
+        tool_check_response = llm_with_tools.invoke(messages)
+        
+        # 4. 도구 호출(Tool Calls) 감지 확인
+        if tool_check_response.tool_calls:
+            logger.info(f"[Tool Check] 도구 사용 감지: {len(tool_check_response.tool_calls)}건")
+
+            # 도구 실행 결과(ToolMessage)를 모아둘 리스트
+            tool_messages = []
+
+            # 감지된 모든 도구 호출 순차 실행
+            for tool_call in tool_check_response.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                
+                # 안전장치: 알 수 없는 도구 호출 방어
+                if tool_name not in tool_map:
+                    logger.warning(f"[Tool Execution] 정의되지 않은 도구 요청 무시: {tool_name}")
+                    continue
+
+                logger.info(f"[Tool Execution] '{tool_name}' 실행 중... | 인자: {tool_args}")
+                
+                try:
+                    selected_tool = tool_map[tool_name]
+                    
+                    # [실행] 도구 함수 호출
+                    tool_output_str = selected_tool.invoke(tool_args)
+                    
+                    # (A) 결과 분석: 페이지 이동(Navigate) 여부 체크
+                    # 도구 반환값이 JSON 형태인지 확인 (일반 텍스트일 수도 있음)
+                    parsed_output = None
+                    try:
+                        parsed_output = json.loads(tool_output_str)
+                    except (json.JSONDecodeError, TypeError):
+                        pass # JSON이 아니면 일반 텍스트 결과로 간주
+
+                    # 'navigate' 액션이면 즉시 종료하고 클라이언트에 응답 반환
+                    if (
+                        isinstance(parsed_output, dict)
+                        and parsed_output.get("action") == "navigate"
+                        and "target_url" in parsed_output
+                    ):
+                        logger.info("[Tool Output] 페이지 이동(Navigation) 요청 감지 -> 즉시 반환")
+                        navigation_response = {
+                            "answer": "페이지 이동을 진행합니다.",
+                            **parsed_output,
+                        }
+                        return navigation_response
+
+                    # (B) 일반 정보 조회(Search) 결과 처리
+                    logger.info(f"[Tool Output] 데이터 조회 완료. (메시지 이력에 추가)")
+                    
+                    # 실행 결과를 ToolMessage 형태로 변환하여 리스트에 추가
+                    tool_messages.append(
+                        ToolMessage(
+                            content=str(tool_output_str), # 문자열 보장
+                            tool_call_id=tool_call["id"],
+                            name=tool_name
+                        )
+                    )
+
+                except Exception as e:
+                    # 개별 도구 실행 중 에러가 나도 전체 프로세스는 죽지 않도록 방어
+                    logger.error(f"[Tool Execution Error] {tool_name} 실행 실패: {e}", exc_info=True)
+                    continue
+
+            # 5. 최종 답변 생성 (Generator 단계)
+            # 도구 실행 결과가 하나라도 존재할 경우에만 수행
+            if tool_messages:
+                logger.info(f"[Tool Finalizing] 총 {len(tool_messages)}건의 정보를 바탕으로 답변 생성 중...")
+
+                # 대화 이력 재구성: [시스템, 질문, (도구호출의도), 도구결과1, 도구결과2...]
+                history = [
+                    SystemMessage(content=system_instruction),
+                    HumanMessage(content=user_query),
+                    tool_check_response, # AIMessage with tool_calls
+                ] + tool_messages
+                
+                # 최종 답변은 도구가 바인딩되지 않은 순수 'llm'을 사용
+                # 이유: llm_with_tools를 쓰면 결과를 보고 또 도구를 호출하려는 루프에 빠질 수 있음.
+                final_response = llm.invoke(history)
+                
+                return {
+                    "answer": final_response.content,
+                    "attribution": [], # 외부 도구 조회 결과이므로 벡터DB 출처는 없음
+                }
+            
+            else:
+                # 도구 호출은 있었으나, 유효한 결과(ToolMessage)가 하나도 없는 경우 (실패 또는 무시됨)
+                logger.warning("[Tool Fallback] 도구 호출이 있었으나 유효한 결과가 없어 RAG 파이프라인으로 넘어갑니다.")
+
+        # 도구 호출이 없는 경우를 명시적으로 처리
+        else:
+            logger.warning("[Tool Fallback] 도구 실행 결과가 없음 -> RAG 검색 파이프라인으로 전환하여 답변 시도")
+
+    except Exception as e:
+        # 도구 파이프라인 전체 에러 핸들링
+        logger.error(f"[Tool System Error] 도구 처리 중 오류 무시 후 RAG 전환 시도: {e}", exc_info=True)
+
+
     # 0. 질문 분류 (LLM-first 판단)
     classifier_prompt = PromptTemplate.from_template(
     build_question_classifier_prompt()
