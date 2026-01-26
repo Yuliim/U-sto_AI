@@ -111,7 +111,9 @@ def get_relevant_faq_string(user_question: str) -> str:
         # 키워드 정규화를 1회만 수행하고, 결과를 항목에 캐시
         normalized_keywords = item.get("_normalized_keywords")
         if normalized_keywords is None:
-            raw_keywords = item.get("keywords", [])
+            raw_keywords = item.get("keywords")
+            if not isinstance(raw_keywords, list):
+                raw_keywords = []
             normalized_keywords = [_normalize(k) for k in raw_keywords]
             item["_normalized_keywords"] = normalized_keywords
         # 이미 정규화된 키워드를 사용해 비교

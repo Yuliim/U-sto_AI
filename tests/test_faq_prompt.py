@@ -78,62 +78,55 @@ class TestFAQPromptLogic(unittest.TestCase):
 
 
     @patch('rag.faq_service._ensure_faq_loaded', return_value=None)
-    @patch('rag.faq_service._FAQ_CACHE_DATA', [
-        {"question": "Q1", "answer": "A1", "keywords": ["테스트"]}
-    ])
     def test_service_keyword_filtering_real_logic(self, mock_ensure_faq_loaded):
         """
         Case 4: (서비스 로직 검증) 실제 키워드 매칭이 동작하는지 확인
         """
         from rag.faq_service import get_relevant_faq_string
-        
-        # 1. 키워드 매칭 성공
-        res_match = get_relevant_faq_string("이건 테스트 질문이야")
-        self.assertIn("Q: Q1", res_match)
-
-        # 2. 키워드 매칭 실패
-        res_no_match = get_relevant_faq_string("이건 엉뚱한 질문이야")
-        self.assertEqual(res_no_match, "")
-
-        # 3. 목록 요청 (사용자님의 최신 로직: 질문+답변 쌍 전체 출력)
-        res_list = get_relevant_faq_string("FAQ 보여줘")
-        
-        # 헤더 문구 확인 (내용 목록으로 수정됨)
-        self.assertIn("[FAQ 전체 내용 목록]", res_list)
-        
-        # 질문과 답변이 쌍으로 잘 들어있는지 확인
-        self.assertIn("Q: Q1", res_list)
-        self.assertIn("A: A1", res_list)
-
-
+        # 각 테스트 실행마다 새로운 FAQ 캐시 데이터를 주입하여
+        # 프로덕션 코드에서의 변이가 테스트 간에 누수되지 않도록 한다.
+        with patch('rag.faq_service._FAQ_CACHE_DATA', [
+            {"question": "Q1", "answer": "A1", "keywords": ["테스트"]}
+        ]):
+            # 1. 키워드 매칭 성공
+            res_match = get_relevant_faq_string("이건 테스트 질문이야")
+            self.assertIn("Q: Q1", res_match)
+            # 2. 키워드 매칭 실패
+            res_no_match = get_relevant_faq_string("이건 엉뚱한 질문이야")
+            self.assertEqual(res_no_match, "")
+            # 3. 목록 요청 (사용자님의 최신 로직: 질문+답변 쌍 전체 출력)
+            res_list = get_relevant_faq_string("FAQ 보여줘")
+            # 헤더 문구 확인 (내용 목록으로 수정됨)
+            self.assertIn("[FAQ 전체 내용 목록]", res_list)
+            # 질문과 답변이 쌍으로 잘 들어있는지 확인
+            self.assertIn("Q: Q1", res_list)
+            self.assertIn("A: A1", res_list)
     @patch('rag.faq_service._ensure_faq_loaded') # [추가] 실제 로드 로직 실행 방지 (No-op)
-    @patch('rag.faq_service._FAQ_CACHE_DATA', [
-        {"question": "Q_불용", "answer": "A_불용", "keywords": ["불용차이", "반납불용"]},
-        {"question": "Q_G2B", "answer": "A_G2B", "keywords": ["G2B번호"]}
-    ])
     def test_normalization_matching(self, mock_ensure_loaded):
         """
         정규화(Normalization) 동작 검증:
         공백, 특수문자, 대소문자가 달라도 키워드를 찾아내야 한다.
         """
-        # mock_ensure_loaded는 아무 동작도 하지 않으므로, 
-        # 위에서 주입한 _FAQ_CACHE_DATA가 그대로 유지됩니다.
-
-        # Case 1: 공백이 들어간 경우 ("불용 차이" -> "불용차이")
-        res_space = get_relevant_faq_string("반납이랑 불용 차이가 궁금해요")
-        self.assertIn("Q_불용", res_space)
-
-        # Case 2: 특수문자가 섞인 경우 ("불용-차이??")
-        res_symbol = get_relevant_faq_string("반납/불용-차이?? 알려줘")
-        self.assertIn("Q_불용", res_symbol)
-
-        # Case 3: 대소문자 및 공백 혼합 ("g2b 번호")
-        res_case = get_relevant_faq_string("g2b 번호가 뭐야?")
-        self.assertIn("Q_G2B", res_case)
-
-        # Case 4: 매칭되지 않아야 하는 경우
-        res_fail = get_relevant_faq_string("완전 다른 질문")
-        self.assertEqual(res_fail, "")
+        # 각 테스트 실행마다 새로운 FAQ 캐시 데이터를 주입하여
+        # 프로덕션 코드에서의 변이가 테스트 간에 누수되지 않도록 한다.
+        with patch('rag.faq_service._FAQ_CACHE_DATA', [
+            {"question": "Q_불용", "answer": "A_불용", "keywords": ["불용차이", "반납불용"]},
+            {"question": "Q_G2B", "answer": "A_G2B", "keywords": ["G2B번호"]}
+        ]):
+            # mock_ensure_loaded는 아무 동작도 하지 않으므로, 
+            # 위에서 주입한 _FAQ_CACHE_DATA가 그대로 유지됩니다.
+            # Case 1: 공백이 들어간 경우 ("불용 차이" -> "불용차이")
+            res_space = get_relevant_faq_string("반납이랑 불용 차이가 궁금해요")
+            self.assertIn("Q_불용", res_space)
+            # Case 2: 특수문자가 섞인 경우 ("불용-차이??")
+            res_symbol = get_relevant_faq_string("반납/불용-차이?? 알려줘")
+            self.assertIn("Q_불용", res_symbol)
+            # Case 3: 대소문자 및 공백 혼합 ("g2b 번호")
+            res_case = get_relevant_faq_string("g2b 번호가 뭐야?")
+            self.assertIn("Q_G2B", res_case)
+            # Case 4: 매칭되지 않아야 하는 경우
+            res_fail = get_relevant_faq_string("완전 다른 질문")
+            self.assertEqual(res_fail, "")
 
 if __name__ == '__main__':
     unittest.main()
