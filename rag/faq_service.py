@@ -96,25 +96,29 @@ def get_relevant_faq_string(user_question: str) -> str:
     norm_question = _normalize(user_question)
     
     # 2. [전체 목록 요청 감지]
-    # "FAQ 보여줘" -> 질문(Q) 목록만 요약해서 보여줌
+    # "FAQ 보여줘" -> FAQ 전체 Q&A(질문+답변) 목록을 그대로 보여줌
     list_keywords = ["faq", "자주묻는", "질문리스트", "질문목록"]
     if any(k in norm_question for k in list_keywords):
         formatted_blocks = ["[FAQ 전체 내용 목록]"]
         for item in _FAQ_CACHE_DATA:
-            # 질문과 답변 쌍을 모두 추가
+            # 각 FAQ 항목의 질문과 답변 쌍을 모두 추가
             formatted_blocks.append(f"Q: {item['question']}\nA: {item['answer']}")
         return "\n\n".join(formatted_blocks)
 
     # 3. [키워드 매칭]
     matched_items = []
     for item in _FAQ_CACHE_DATA:
-        keywords = item.get("keywords", [])
-        
-        # 키워드들도 정규화해서 비교
-        for k in keywords:
-            if _normalize(k) in norm_question:
+        # 키워드 정규화를 1회만 수행하고, 결과를 항목에 캐시
+        normalized_keywords = item.get("_normalized_keywords")
+        if normalized_keywords is None:
+            raw_keywords = item.get("keywords", [])
+            normalized_keywords = [_normalize(k) for k in raw_keywords]
+            item["_normalized_keywords"] = normalized_keywords
+        # 이미 정규화된 키워드를 사용해 비교
+        for nk in normalized_keywords:
+            if nk in norm_question:
                 matched_items.append(item)
-                break 
+                break
 
     if not matched_items:
         return ""

@@ -78,8 +78,6 @@ class TestFAQPromptLogic(unittest.TestCase):
 
 
     @patch('rag.faq_service._ensure_faq_loaded', return_value=None)
-    
-
     @patch('rag.faq_service._FAQ_CACHE_DATA', [
         {"question": "Q1", "answer": "A1", "keywords": ["테스트"]}
     ])
@@ -109,8 +107,6 @@ class TestFAQPromptLogic(unittest.TestCase):
 
 
     @patch('rag.faq_service._ensure_faq_loaded') # [추가] 실제 로드 로직 실행 방지 (No-op)
-    
-    
     @patch('rag.faq_service._FAQ_CACHE_DATA', [
         {"question": "Q_불용", "answer": "A_불용", "keywords": ["불용차이", "반납불용"]},
         {"question": "Q_G2B", "answer": "A_G2B", "keywords": ["G2B번호"]}
