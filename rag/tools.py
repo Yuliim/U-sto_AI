@@ -6,7 +6,7 @@ import urllib.parse
 import requests
 import re
 import html
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 from rag import dictionaries
 
 from dotenv import load_dotenv
@@ -146,9 +146,25 @@ def get_item_detail_info(
 
         return json.dumps(data, ensure_ascii=False)
 
-    except json.JSONDecodeError:
-        logger.error("API 응답 JSON 파싱 실패", exc_info=True)
-        return json.dumps({"error": "서버 응답 형식이 올바르지 않습니다."}, ensure_ascii=False)
+    except json.JSONDecodeError as e:
+        # JSON 디코딩 실패 시 응답 일부를 함께 로깅/반환하여 디버깅에 도움을 줍니다.
+        response_preview = ""
+        try:
+            if isinstance(getattr(e, "doc", None), str):
+                response_preview = e.doc[:100]
+        except Exception:
+            # 예외 객체에서 doc를 읽는 과정에서의 추가 오류는 무시
+            response_preview = ""
+        logger.error(
+            "API 응답 JSON 파싱 실패 (위치: %s, 응답 일부: %r)",
+            getattr(e, "pos", None),
+            response_preview,
+            exc_info=True,
+        )
+        error_message = "서버 응답 형식이 올바르지 않습니다."
+        if response_preview:
+            error_message += f" (응답 일부: {response_preview!r})"
+        return json.dumps({"error": error_message}, ensure_ascii=False)
 
     # 에러 핸들링 (구체적 -> 포괄적 순서 유지)
     except requests.exceptions.Timeout as e:
