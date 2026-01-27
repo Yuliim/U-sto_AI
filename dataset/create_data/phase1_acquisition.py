@@ -96,6 +96,10 @@ REMARK_TEMPLATES_BY_CLASS = {
 # ---------------------------------------------------------
 # 1-1. G2B 품목 마스터 (17개 표준 품목)
 # 구조: [물품분류코드(8), 물품식별코드(8), 품목명, 분류명, 내용연수, 평균단가(원)]
+# 캠퍼스 설정
+CAMPUS_TYPES = ['서울', 'ERICA']
+CAMPUS_PROBS = [0.5, 0.5] # 5:5 비율
+
 G2B_MASTER_DATA = [
     # IT 기기
     ("43211503", "26103121",
@@ -216,6 +220,8 @@ for i in range(TOTAL_COUNT):
     # [수정] 내부 계산용 변수는 무조건 datetime 객체로 변환
     acq_date = datetime(temp_date.year, temp_date.month, temp_date.day)
 
+    # 캠퍼스 랜덤 배정
+    campus = np.random.choice(CAMPUS_TYPES, p=CAMPUS_PROBS) 
     # 4) 정리일자 생성
     # 확정: 취득일 + (3일 ~2주)
     # 대기/반려: NULL (None)
@@ -269,6 +275,7 @@ for i in range(TOTAL_COUNT):
         '물품분류명': class_name,
         '물품식별코드': id_code,
         '물품품목명': item_name, 
+        '캠퍼스': campus,  
         
         # 취득 정보
         '취득일자': acq_date_str,
@@ -296,7 +303,7 @@ df_acquisition = pd.DataFrame(acquisition_list)
 # [03-01] 물품 취득 대장 목록 (Main Output)
 # 필요한 컬럼만 추출하여 저장
 cols_acquisition = [
-    'G2B_목록번호', 'G2B_목록명', '취득일자', '취득금액', '정리일자', 
+    'G2B_목록번호', 'G2B_목록명','캠퍼스','취득일자', '취득금액', '정리일자', 
     '운용부서', '운용상태', '내용연수', '수량', '승인상태', 
     '취득정리구분', '운용부서코드', '비고'
 ]
