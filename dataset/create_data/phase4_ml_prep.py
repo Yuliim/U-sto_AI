@@ -55,15 +55,19 @@ print("✨ 2. 파생변수 생성 (Feature Engineering) 중...")
 # 기준일자 (현재 시뮬레이션 상의 오늘)
 current_date = pd.Timestamp(datetime.now().date())
 
-# [Feature 1] 총 사용 기간
+# [Feature 1] 캠퍼스 구분 (One-Hot Encoding or Binary Mapping)
+# 서울: 0, ERICA: 1 로 변환하여 모델이 계산할 수 있게 함
+df_merged['캠퍼스_CD'] = df_merged['캠퍼스'].map({'서울': 0, 'ERICA': 1})
+
+# [Feature 2] 총 사용 기간
 df_merged['관측종료일자'] = df_merged['불용일자'].fillna(current_date)
 df_merged['총사용일수'] = (df_merged['관측종료일자'] - df_merged['취득일자']).dt.days
 
-# [Feature 2] 잔여내구연한 (RUL)
+# [Feature 3] 잔여내구연한 (RUL)
 df_merged['법적내용연수'] = df_merged['내용연수'] * 365
 df_merged['잔여내용연수'] = df_merged['법적내용연수'] - df_merged['총사용일수']
 
-# [Feature 3] 사용 강도 지표 (Usage Intensity)
+# [Feature 4] 사용 강도 지표 (Usage Intensity)
 def calculate_intensity(remark):
     if pd.isna(remark): return 1
     remark = str(remark)
@@ -76,11 +80,11 @@ def calculate_intensity(remark):
 
 df_merged['사용강도'] = df_merged['비고'].apply(calculate_intensity)
 
-# [Feature 4] 고장 발생 플래그 (Failure Flag)
+# [Feature 5] 고장 발생 플래그 (Failure Flag)
 # 💡 [수정 포인트] 위에서 변경한 '불용사유' 컬럼을 사용합니다.
 df_merged['고장발생여부'] = df_merged['불용사유'].apply(lambda x: 1 if x == '고장/파손' else 0)
 
-# [Feature 5] 가격대별 가중치 (log scale)
+# [Feature 6] 가격대별 가중치 (log scale)
 df_merged['취득금액_Log'] = np.log1p(df_merged['취득금액'])
 
 # ---------------------------------------------------------
@@ -110,7 +114,7 @@ print(f"   - Test Set  : {len(test_set)}건")
 # 4. 결과 저장
 # ---------------------------------------------------------
 model_cols = [
-    '물품고유번호', 'G2B_목록명', '물품분류명',
+    '물품고유번호', 'G2B_목록명', '물품분류명', '캠퍼스', '캠퍼스_CD',
     '취득금액', '취득금액_Log', '내용연수', '사용강도', 
     '취득일자', '불용일자', '총사용일수', '잔여내용연수', '고장발생여부',
     '운용부서'
