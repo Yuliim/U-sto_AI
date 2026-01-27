@@ -97,7 +97,8 @@ def run_rag_chain(
                     try:
                         parsed_output = json.loads(tool_output_str)
                     except (json.JSONDecodeError, TypeError):
-                        pass 
+                        # JSON 파싱에 실패한 경우, 도구 출력은 일반 텍스트로 처리하기 위해 parsed_output을 None으로 유지합니다.
+                        parsed_output = None
 
                     # -------------------------------------------------------
                     # [Case A] 페이지 이동 (Navigate) -> 즉시 종료(Return)

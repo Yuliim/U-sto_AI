@@ -1,11 +1,9 @@
-# tools.py
 import json
 import logging
 import os
 import urllib.parse
 import requests
 import re
-import html
 from typing import Optional, Tuple
 from rag import dictionaries
 
@@ -93,9 +91,9 @@ def get_item_detail_info(
     사용자가 필드를 잘못 입력해도 자동 보정(Smart Correction)을 수행합니다.
     """
     # 1. 기본 정제
-    asset_name = asset_name.strip() if asset_name else None
-    asset_id = asset_id.strip() if asset_id else None
-    identification_num = identification_num.strip() if identification_num else None
+    asset_name = (asset_name.strip() or None) if asset_name else None
+    asset_id = (asset_id.strip() or None) if asset_id else None
+    identification_num = (identification_num.strip() or None) if identification_num else None
 
     # 2. 스마트 보정 (로직 분리)
     asset_name, asset_id, identification_num = _apply_smart_correction(
@@ -131,12 +129,12 @@ def get_item_detail_info(
         # 명시적으로 슬래시 처리를 하거나 기존 방식 유지. 여기서는 안전하게 기존 로직을 urljoin 스타일로 변경
         # (BACKEND_API_URL이 'http://api.com' 형태라고 가정)
         if not api_url.endswith('/search'): # urljoin 특성상 base 뒤에 /가 없으면 path가 대체될 수 있음 방지
-             api_url = f"{BACKEND_API_URL.rstrip('/')}/search"
+            api_url = f"{BACKEND_API_URL.rstrip('/')}/search"
 
         response = requests.get(api_url, params=params, timeout=API_REQUEST_TIMEOUT)
         response.raise_for_status()
         
-       # JSON 파싱과 이후 로직은 별도의 try 구문으로 감싸 JSONDecodeError만을 명확히 처리합니다.
+        # JSON 파싱과 이후 로직은 별도의 try 구문으로 감싸 JSONDecodeError만을 명확히 처리합니다.
         try:
             data = response.json()
             if not data.get("results"):
@@ -198,6 +196,8 @@ def open_usage_prediction_page(user_question_context: str) -> str:
         # 문자열 변환 및 정제
         cleaned_context = str(user_question_context).strip()
         cleaned_context = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned_context)
+        # 잠재적인 XSS를 방지하기 위해 HTML 태그 제거
+        cleaned_context = re.sub(r'<[^>]+>', '', cleaned_context)
         
         # 길이 제한 및 로그
         if len(cleaned_context) > MAX_CONTEXT_LENGTH:
