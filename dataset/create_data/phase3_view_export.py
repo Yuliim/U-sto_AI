@@ -213,5 +213,5 @@ else:
 
 print("\n🎉 모든 작업이 완료되었습니다.")
 print("   생성된 파일 목록:")
-print("   - View_06_01_처분목록.csv / View_06_01_처분물품목록.csv")
+print("   - View_06_01_불용물품등록.csv")
 print("   - View_07_01_보유현황_이력기반.csv")
