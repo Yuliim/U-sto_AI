@@ -24,7 +24,7 @@ from app.config import (
 logger = logging.getLogger(__name__)
 
 
-# [최적화 1] 모듈 레벨 상수 정의 (서버 켜질 때 1번만 실행됨)
+# [최적화] 모듈 레벨 상수 정의 (서버 켜질 때 1번만 실행됨)
 # 1. 사용할 도구 목록
 TOOLS = [get_item_detail_info, open_usage_prediction_page]
 
@@ -92,7 +92,7 @@ def run_rag_chain(
                     selected_tool = TOOL_MAP[tool_name]
                     tool_output_str = selected_tool.invoke(tool_args)
                     
-                    # (A) 결과 분석: JSON 파싱 시도
+                    # 결과 분석: JSON 파싱 시도
                     parsed_output = None
                     try:
                         parsed_output = json.loads(tool_output_str)

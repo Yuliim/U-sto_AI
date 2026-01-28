@@ -9,6 +9,7 @@ from rag import dictionaries
 
 from dotenv import load_dotenv
 from langchain_core.tools import tool
+from rag.dictionaries import KEYWORD_SYNONYMS, PREDICTION_METADATA
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -110,8 +111,9 @@ def get_item_detail_info(
     # 4. 검색어 표준화 (Synonym -> Standard)
     target_search_name = asset_name
     if asset_name:
-        standard_name = _get_normalized_keyword(asset_name)
-        if standard_name:
+        # 딕셔너리(KEYWORD_SYNONYMS)를 이용해 표준명으로 변환
+        standard_name = KEYWORD_SYNONYMS.get(asset_name, asset_name) 
+        if standard_name != asset_name:
             target_search_name = standard_name
             logger.info(f"[Synonym Match] '{asset_name}' -> '{target_search_name}'")
 
@@ -137,6 +139,39 @@ def get_item_detail_info(
         # JSON 파싱과 이후 로직은 별도의 try 구문으로 감싸 JSONDecodeError만을 명확히 처리합니다.
         try:
             data = response.json()
+
+            # ------------------------------------------------------------------
+            # [핵심 수정 부분] API 결과에 AI 예측 메타데이터 주입 (Enrichment)
+            # ------------------------------------------------------------------
+            
+            # API 결과가 있든 없든, 우리가 가진 '표준명'이 VIP 리스트에 있는지 확인합니다.
+            # 만약 API 결과(data) 안에 표준명이 들어있다면 그것을 우선 사용하고,
+            # 없다면 요청했던 target_search_name을 사용합니다.
+            
+            check_name = target_search_name
+            if data.get("results") and isinstance(data["results"], list):
+                # 결과의 첫 번째 항목의 이름을 가져와서 확인 (API 응답 구조에 따라 조정 필요)
+                first_item = data["results"][0]
+                check_name = first_item.get("g2b_name", target_search_name)
+
+            # AI 데이터셋(PREDICTION_METADATA)에 있는지 확인
+            ai_info = PREDICTION_METADATA.get(check_name)
+            
+            if ai_info:
+                # 결과 JSON에 AI 정보를 추가해줍니다.
+                data["ai_capability"] = {
+                    "is_predictable": True,
+                    "model_code": ai_info["code"],
+                    "avg_lifespan": ai_info["lifespan"],
+                    "message": "이 물품은 AI 수명 예측 모델 분석이 가능합니다."
+                }
+            else:
+                data["ai_capability"] = {
+                    "is_predictable": False,
+                    "message": "이 물품은 AI 수명 예측 대상이 아닙니다."
+                }
+            # ------------------------------------------------------------------
+
             if not data.get("results"):
                 msg = "조건에 맞는 물품을 찾을 수 없습니다."
                 if asset_name and asset_name != target_search_name:
