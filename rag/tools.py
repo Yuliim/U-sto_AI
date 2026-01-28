@@ -132,13 +132,9 @@ def get_item_detail_info(
 
     # 6. API 호출
     try:
-        # urljoin을 사용하여 경로 결합 안전성 확보
-        api_url = urllib.parse.urljoin(BACKEND_API_URL, "/search")
-        # 주의: urljoin은 base가 '/'로 끝나지 않으면 마지막 경로를 덮어쓸 수 있으므로, 
-        # 명시적으로 슬래시 처리를 하거나 기존 방식 유지. 여기서는 안전하게 기존 로직을 urljoin 스타일로 변경
-        # (BACKEND_API_URL이 'http://api.com' 형태라고 가정)
-        if not api_url.endswith('/search'): # urljoin 특성상 base 뒤에 /가 없으면 path가 대체될 수 있음 방지
-            api_url = f"{BACKEND_API_URL.rstrip('/')}/search"
+        # urljoin의 복잡한 규칙 대신, 명시적인 문자열 결합을 사용하여 안전성 확보
+        # rstrip('/')으로 base의 마지막 슬래시를 제거하고, 뒤에 '/search'를 붙여 중복/누락 방지
+        api_url = f"{BACKEND_API_URL.rstrip('/')}/search"
 
         response = requests.get(api_url, params=params, timeout=API_REQUEST_TIMEOUT)
         response.raise_for_status()
@@ -189,9 +185,8 @@ def get_item_detail_info(
                     msg += f" (참고: '{asset_name}' -> '{target_search_name}' 변환 검색)"
                 return json.dumps({"message": msg}, ensure_ascii=False)
             return json.dumps(data, ensure_ascii=False)
+    
         except json.JSONDecodeError:
-            # 복잡한 e.doc 참조 대신, response 객체의 원본 텍스트를 바로 확인합니다.
-            # 코드가 훨씬 간결해지고, 데이터의 출처가 명확해집니다.
             response_preview = response.text[:100] if response else "Unknown"
             
             logger.error(

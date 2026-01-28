@@ -318,7 +318,7 @@ def test_tool_error_handling_by_llm(mock_refiner, mock_classifier, mock_tool_fun
 
 @patch("rag.chain.query_refinement_chain")
 @patch("rag.chain.question_classifier_chain")
-def test_fallback_on_unknown_tool(mock_classifier, mock_refiner, mock_dependencies, caplog):
+def test_fallback_on_unknown_tool(mock_refiner, mock_classifier, mock_dependencies, caplog):
     """
     모르는 도구나 애매한 요청이 들어왔을 때, 
     RAG(검색) 모드로 안전하게 넘어가는지(Fallback) 테스트

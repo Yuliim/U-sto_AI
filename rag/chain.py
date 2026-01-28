@@ -64,6 +64,11 @@ def run_rag_chain(
         # ----------------------------------------------------------------------
         # 도구 호출(Tool Calls)이 감지된 경우
         # ----------------------------------------------------------------------
+        
+        # [설정] 민감 정보 키 목록 정의
+        # 소문자로 정의하여 대소문자 구분 없이 걸러냅니다.
+        SENSITIVE_KEYS = {"password", "secret", "token", "auth", "apikey", "ssn", "card_number", "phone"}
+        
         if tool_check_response.tool_calls:
             logger.info(f"[Tool Check] 도구 사용 감지: {len(tool_check_response.tool_calls)}건")
             
@@ -80,10 +85,6 @@ def run_rag_chain(
                 if tool_name not in TOOL_MAP:
                     logger.warning(f"[Tool Execution] 정의되지 않은 도구 요청 무시: {tool_name}")
                     continue
-
-                # [설정] 민감 정보 키 목록 정의
-                # 소문자로 정의하여 대소문자 구분 없이 걸러냅니다.
-                SENSITIVE_KEYS = {"password", "secret", "token", "auth", "apikey", "ssn", "card_number", "phone"}
                  
                 # [안전장치 2] 로깅 보안 (Sanitization + Redaction)
                 if isinstance(tool_args, dict):
@@ -181,39 +182,56 @@ def run_rag_chain(
             # ------------------------------------------------------------------
             # 도구 실행 후 최종 답변 생성 (Generator)
             # ------------------------------------------------------------------
-            if tool_messages:
-                logger.info(f"[Tool Finalizing] 총 {len(tool_messages)}건의 정보를 바탕으로 답변 생성 중...")
-
-                # 대화 이력 재구성: [시스템, 유저질문, (AI의 도구호출), 도구결과1, 도구결과2...]
-                history = [
-                    SystemMessage(content=system_instruction),
-                    HumanMessage(content=user_query),
-                    tool_check_response, 
-                ] + tool_messages
+            # 도구 메시지가 있거나(OR) 화면 이동 명령이 있다면 RAG를 스킵하고 여기서 처리
+            if tool_messages or pending_navigation:
                 
-                # 순수 LLM으로 최종 답변 생성 (도구 바인딩 X)
-                final_response = llm.invoke(history)
-                final_answer_text = final_response.content  # 답변 내용 꺼내기
+                final_answer_text = ""
 
+                # Case A: 도구 실행 결과(데이터)가 있는 경우 -> LLM이 내용을 정리해서 답변
+                if tool_messages:
+                    logger.info(f"[Tool Finalizing] 총 {len(tool_messages)}건의 정보를 바탕으로 답변 생성 중...")
+
+                    # 대화 이력 재구성: [시스템, 유저질문, (AI의 도구호출), 도구결과1, 도구결과2...]
+                    history = [
+                        SystemMessage(content=system_instruction),
+                        HumanMessage(content=user_query),
+                        tool_check_response, 
+                    ] + tool_messages
+                    
+                    # 순수 LLM으로 최종 답변 생성
+                    final_response = llm.invoke(history)
+                    final_answer_text = final_response.content
+
+                # Case B: 데이터는 없지만 화면 이동 명령만 있는 경우 ("설정 화면으로 가줘")
+                else:
+                    logger.info("[Tool Finalizing] 데이터 조회 없이 화면 이동만 수행합니다.")
+                    final_answer_text = "요청하신 화면으로 이동합니다."
+
+                # --------------------------------------------------------------
+                # 결과 반환 처리
+                # --------------------------------------------------------------
+                
+                # 1. 화면 이동 명령이 있는 경우
                 if pending_navigation:
-                    logger.info(f"[Final Step] 페이지 이동 명령 실행: {pending_navigation['target_url']}")
-        
-                    # 중요: LLM이 방금 만든 최종 답변("저장 완료했습니다, 이동할게요")을 
-                    # 이동 명령 패키지의 'answer'에 덮어씌워 줍니다.
+                    logger.info(f"[Final Step] 페이지 이동 명령 실행: {pending_navigation.get('target_url')}")
+                    
+                    # LLM이 만든 답변(혹은 기본 문구)을 이동 명령 패키지에 담음
                     pending_navigation["answer"] = final_answer_text
-
-                    # 이제서야 이동 명령을 반환합니다.
+                    
+                    # 이동 명령 반환 (RAG 스킵)
                     return pending_navigation
 
-                # RAG를 타지 않고 여기서 함수 종료
+                # 2. 이동 없이 답변만 있는 경우
                 return {
                     "answer": final_answer_text,
                     "attribution": []
                 }
             
+            # ------------------------------------------------------------------
+            # 도구 결과도 없고, 이동 명령도 없는 경우 -> RAG 검색 수행
+            # ------------------------------------------------------------------
             else:
-                # 도구를 호출하려 했으나 유효한 결과가 없는 경우 -> RAG로 넘어감
-                logger.info("[Tool Fallback] 유효한 도구 결과 없음 -> RAG로 전환")
+                logger.info("[Tool Fallback] 유효한 도구 결과 및 이동 명령 없음 -> RAG로 전환")
 
         else:
             # 애초에 도구 호출이 필요 없는 질문인 경우 -> RAG로 넘어감
