@@ -20,6 +20,10 @@ from app.config import (
     RERANK_DEBUG
 )
 
+# [설정] 민감 정보 키 목록 정의
+# 소문자로 정의하여 대소문자 구분 없이 걸러냅니다.
+SENSITIVE_KEYS = {"password", "secret", "token", "auth", "apikey", "ssn", "card_number", "phone"}
+
 # 로거 설정 (print 대신 사용)
 logger = logging.getLogger(__name__)
 
@@ -64,11 +68,6 @@ def run_rag_chain(
         # ----------------------------------------------------------------------
         # 도구 호출(Tool Calls)이 감지된 경우
         # ----------------------------------------------------------------------
-        
-        # [설정] 민감 정보 키 목록 정의
-        # 소문자로 정의하여 대소문자 구분 없이 걸러냅니다.
-        SENSITIVE_KEYS = {"password", "secret", "token", "auth", "apikey", "ssn", "card_number", "phone"}
-        
         if tool_check_response.tool_calls:
             logger.info(f"[Tool Check] 도구 사용 감지: {len(tool_check_response.tool_calls)}건")
             

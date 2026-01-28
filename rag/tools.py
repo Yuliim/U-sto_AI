@@ -28,16 +28,6 @@ except ValueError:
     API_REQUEST_TIMEOUT = 10.0
     logger.warning("API_REQUEST_TIMEOUT 환경변수가 숫자가 아닙니다. 기본값 10초를 사용합니다.")
 
-# 필수 환경변수 검증
-missing_vars = []
-if not BACKEND_API_URL: missing_vars.append("BACKEND_API_URL")
-if not FRONTEND_BASE_URL: missing_vars.append("FRONTEND_BASE_URL")
-
-if missing_vars:
-    error_msg = f"Required environment variables are missing: {', '.join(missing_vars)}"
-    logger.error(error_msg)
-    raise RuntimeError(error_msg)
-
 
 # [최적화] 동의어 조회용 해시 테이블 (O(1))
 _SYNONYM_LOOKUP = {k.lower(): v for k, v in KEYWORD_SYNONYMS.items()}
@@ -131,20 +121,21 @@ def get_item_detail_info(
     if target_search_name: params["asset_name"] = target_search_name
 
     # 6. API 호출
+    response = None 
+    
     try:
-        # urljoin의 복잡한 규칙 대신, 명시적인 문자열 결합을 사용하여 안전성 확보
-        # rstrip('/')으로 base의 마지막 슬래시를 제거하고, 뒤에 '/search'를 붙여 중복/누락 방지
+        # urljoin 대신 f-string 사용 (이전 피드백 반영)
         api_url = f"{BACKEND_API_URL.rstrip('/')}/search"
 
         response = requests.get(api_url, params=params, timeout=API_REQUEST_TIMEOUT)
         response.raise_for_status()
         
-        # JSON 파싱과 이후 로직은 별도의 try 구문으로 감싸 JSONDecodeError만을 명확히 처리합니다.
+        # JSON 파싱 시도
         try:
             data = response.json()
 
             # ------------------------------------------------------------------
-            # [핵심 수정 부분] API 결과에 AI 예측 메타데이터 주입 (Enrichment)
+            # API 결과에 AI 예측 메타데이터 주입 (Enrichment)
             # ------------------------------------------------------------------
             
             # API 결과가 있든 없든, 우리가 가진 '표준명'이 VIP 리스트에 있는지 확인합니다.
@@ -184,9 +175,12 @@ def get_item_detail_info(
                 if asset_name and asset_name != target_search_name:
                     msg += f" (참고: '{asset_name}' -> '{target_search_name}' 변환 검색)"
                 return json.dumps({"message": msg}, ensure_ascii=False)
+            
             return json.dumps(data, ensure_ascii=False)
-    
+
         except json.JSONDecodeError:
+            # response가 있으면 내용을 보여주고, 없으면(None이면) "Unknown" 처리
+            # (위에서 response = None으로 초기화했으므로 에러 없이 안전하게 실행됨)
             response_preview = response.text[:100] if response else "Unknown"
             
             logger.error(
