@@ -1,7 +1,8 @@
 import textwrap
 import app.config as config
+import zoneinfo
 from rag.faq_service import get_relevant_faq_string
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 def build_question_classifier_prompt():
     """
@@ -220,7 +221,7 @@ def build_qa_generation_prompt() -> str:
 # Function Calling(Tools) 전용 프롬프트
 
 # KST 타임존 객체는 변하지 않으므로 전역 상수로 한 번만 생성 (메모리 절약 & 속도 향상)
-KST = timezone(timedelta(hours=9))
+KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
 def build_tool_aware_system_prompt():
     """

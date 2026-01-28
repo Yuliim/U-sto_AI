@@ -156,10 +156,14 @@ def get_item_detail_info(
             # 없다면 요청했던 target_search_name을 사용합니다.
             
             check_name = target_search_name
-            if data.get("results") and isinstance(data["results"], list):
+            results = data.get("results")
+            if isinstance(results, list) and results:
                 # 결과의 첫 번째 항목의 이름을 가져와서 확인 (API 응답 구조에 따라 조정 필요)
-                first_item = data["results"][0]
-                check_name = first_item.get("g2b_name", target_search_name)
+                first_item = results[0]
+                if isinstance(first_item, dict):
+                    g2b_name = first_item.get("g2b_name")
+                    if isinstance(g2b_name, str) and g2b_name.strip():
+                        check_name = g2b_name
 
             # AI 데이터셋(PREDICTION_METADATA)에 있는지 확인
             ai_info = PREDICTION_METADATA.get(check_name)
@@ -185,25 +189,19 @@ def get_item_detail_info(
                     msg += f" (참고: '{asset_name}' -> '{target_search_name}' 변환 검색)"
                 return json.dumps({"message": msg}, ensure_ascii=False)
             return json.dumps(data, ensure_ascii=False)
-        except json.JSONDecodeError as e:
-            # JSON 디코딩 실패 시 응답 일부를 함께 로깅/반환하여 디버깅에 도움을 줍니다.
-            response_preview = ""
-            try:
-                if isinstance(getattr(e, "doc", None), str):
-                    response_preview = e.doc[:100]
-            except Exception:
-                # 예외 객체에서 doc를 읽는 과정에서의 추가 오류는 무시
-                response_preview = ""
+        except json.JSONDecodeError:
+            # 복잡한 e.doc 참조 대신, response 객체의 원본 텍스트를 바로 확인합니다.
+            # 코드가 훨씬 간결해지고, 데이터의 출처가 명확해집니다.
+            response_preview = response.text[:100] if response else "Unknown"
+            
             logger.error(
-                "API 응답 JSON 파싱 실패 (위치: %s, 응답 일부: %r)",
-                getattr(e, "pos", None),
-                response_preview,
-                exc_info=True,
+                f"API 응답 JSON 파싱 실패 (응답 일부: {response_preview!r})",
+                exc_info=True
             )
-            error_message = "서버 응답 형식이 올바르지 않습니다."
-            if response_preview:
-                error_message += f" (응답 일부: {response_preview!r})"
-            return json.dumps({"error": error_message}, ensure_ascii=False)
+            
+            return json.dumps({
+                "error": f"서버 응답 형식이 올바르지 않습니다. (응답 일부: {response_preview})"
+            }, ensure_ascii=False)
 
     # 에러 핸들링 (구체적 -> 포괄적 순서 유지)
     except requests.exceptions.Timeout as e:

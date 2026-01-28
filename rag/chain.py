@@ -69,6 +69,8 @@ def run_rag_chain(
             
             tool_messages = []  # 결과 누적용 리스트
 
+            pending_navigation = None  # 페이지 이동 명령 대기용 변수
+
             # 감지된 모든 도구 순차 실행
             for tool_call in tool_check_response.tool_calls:
                 tool_name = tool_call["name"]
@@ -79,11 +81,26 @@ def run_rag_chain(
                     logger.warning(f"[Tool Execution] 정의되지 않은 도구 요청 무시: {tool_name}")
                     continue
 
-                # [안전장치 2] 로깅 보안 (Sanitization)
-                safe_args = {
-                    k: (str(v)[:100] + "..." if len(str(v)) > 100 else str(v)).replace("\n", "\\n")
-                    for k, v in tool_args.items()
-                } if isinstance(tool_args, dict) else str(tool_args)[:100]
+                # [설정] 민감 정보 키 목록 정의
+                # 소문자로 정의하여 대소문자 구분 없이 걸러냅니다.
+                SENSITIVE_KEYS = {"password", "secret", "token", "auth", "apikey", "ssn", "card_number", "phone"}
+                 
+                # [안전장치 2] 로깅 보안 (Sanitization + Redaction)
+                if isinstance(tool_args, dict):
+                    safe_args = {}
+                    for k, v in tool_args.items():
+                        # [보안] 1. 민감한 키(Key)인지 확인 -> 마스킹 처리
+                        if str(k).lower() in SENSITIVE_KEYS:
+                            safe_args[k] = "[REDACTED]" # 혹은 "*****"
+                        
+                        # [기존] 2. 일반 데이터는 길이 제한 (Truncation)
+                        else:
+                            val_str = str(v).replace("\n", "\\n")
+                            safe_args[k] = val_str[:100] + "..." if len(val_str) > 100 else val_str
+                
+                else:
+                    # 딕셔너리가 아닌 경우 (단일 문자열 등) -> 기존 방식 유지
+                    safe_args = str(tool_args)[:100].replace("\n", "\\n")
                 
                 logger.info(f"[Tool Execution] '{tool_name}' 실행 중... | 인자: {safe_args}")
                 
@@ -101,28 +118,50 @@ def run_rag_chain(
                         parsed_output = None
 
                     # -------------------------------------------------------
-                    # [Case A] 페이지 이동 (Navigate) -> 즉시 종료(Return)
+                    # [Case A] 페이지 이동 (Navigate) -> 임시 저장 (즉시 종료 X)
                     # -------------------------------------------------------
                     if (
                         isinstance(parsed_output, dict)
                         and parsed_output.get("action") == "navigate"
                         and parsed_output.get("target_url")
                     ):
-                        logger.info("[Tool Output] 페이지 이동 요청 감지 -> 즉시 반환")
-                        return {
+                        logger.info("[Tool Output] 페이지 이동 요청 감지 -> 다른 작업 완료 후 이동 예정")
+                        
+                        # 즉시 return 하지 않고 변수에 저장해둡니다.
+                        pending_navigation = {
                             "answer": parsed_output.get("guide_msg", "페이지로 이동합니다."),
                             "target_url": parsed_output.get("target_url"),
                             "query": user_query,
                             "action": "navigate"
                         }
+                        continue  # 다음 도구 처리나 로직으로 넘어감
 
                     # -------------------------------------------------------
                     # [Case B] 정보 조회 (Search) -> 결과 누적(Append)
                     # -------------------------------------------------------
+                    
+                    # 타입 체크 및 안전한 문자열 변환 로직
+                    final_content = ""
+                    
+                    if isinstance(tool_output_str, str):
+                        # 정상적인 문자열인 경우 그대로 사용
+                        final_content = tool_output_str
+                    else:
+                        # 문자열이 아닌 경우 (예: Dict, List, Int 등)
+                        # 1. 코파일럿 지적 반영: 버그를 숨기지 않도록 경고 로그 출력
+                        logger.warning(f"[Tool Warning] {tool_name} 도구가 문자열이 아닌 타입({type(tool_output_str)})을 반환했습니다. 자동 변환합니다.")
+                        
+                        # 2. LLM이 이해하기 쉬운 JSON 형태의 문자열로 변환 (실패 시 일반 str 변환)
+                        try:
+                            final_content = json.dumps(tool_output_str, ensure_ascii=False)
+                        except:
+                            final_content = str(tool_output_str)
+
                     logger.info(f"[Tool Output] 데이터 조회 완료. (메시지 이력에 추가)")
+                    
                     tool_messages.append(
                         ToolMessage(
-                            content=str(tool_output_str),
+                            content=final_content,  # 검증된 문자열 사용
                             tool_call_id=tool_call["id"],
                             name=tool_name
                         )
@@ -154,10 +193,21 @@ def run_rag_chain(
                 
                 # 순수 LLM으로 최종 답변 생성 (도구 바인딩 X)
                 final_response = llm.invoke(history)
+                final_answer_text = final_response.content  # 답변 내용 꺼내기
+
+                if pending_navigation:
+                    logger.info(f"[Final Step] 페이지 이동 명령 실행: {pending_navigation['target_url']}")
+        
+                    # 중요: LLM이 방금 만든 최종 답변("저장 완료했습니다, 이동할게요")을 
+                    # 이동 명령 패키지의 'answer'에 덮어씌워 줍니다.
+                    pending_navigation["answer"] = final_answer_text
+
+                    # 이제서야 이동 명령을 반환합니다.
+                    return pending_navigation
 
                 # RAG를 타지 않고 여기서 함수 종료
                 return {
-                    "answer": final_response.content,
+                    "answer": final_answer_text,
                     "attribution": []
                 }
             
