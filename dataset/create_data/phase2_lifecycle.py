@@ -129,7 +129,7 @@ def get_approval_status_and_date(base_date, prob_dist, is_op_req=False):
         req_date_final = datetime(temp_date.year, temp_date.month, temp_date.day)
         confirm_date = req_date_final # 대기는 신청일이 최근으로 밀림
     elif status == '확정':
-        days_add = random.randint(3, 14) if is_op_req else random.randint(3, 14)
+        days_add = random.randint(3, 14)
         if not is_op_req: # 불용/처분은 조금 더 걸림
              if prob_dist == PROBS_STATUS_DISUSE: days_add = random.randint(14, 30)
              if prob_dist == PROBS_STATUS_DISPOSAL: days_add = random.randint(30, 90)
@@ -155,7 +155,7 @@ def step_operation_req(ctx):
     if op_req_date > TODAY: return False # 미래 시점이면 종료
 
     # 승인 상태 및 날짜 계산
-    status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, None, is_op_req=True)
+    status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, prob_dist=None, is_op_req=True)
     
     # 데이터 적재
     req_type = '신규운용' if ctx['need_initial_req'] else '재사용'
@@ -207,10 +207,9 @@ def step_determine_event(ctx):
     # 1. 조기 반납 (1%)
     if random.random() < PROB_EARLY_RETURN:
         early_date = sim_date + timedelta(days=random.randint(1, 30))
-        if early_date > sim_date:
-            event_date = early_date
-            next_event = '반납'
-            is_early = True
+        event_date = early_date
+        next_event = '반납'
+        is_early = True
 
     # 2. 일반/노후 반납
     if next_event == '유지' and age_days > (365 * 3):
@@ -340,7 +339,8 @@ def step_process_disuse(ctx, trigger_event, inherited_reason):
 def step_process_disposal(ctx, condition, disuse_reason):
     """C-3. 처분 처리"""
     dp_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 14))
-    if dp_date > TODAY: return
+    if dp_date > TODAY: 
+        dp_date = TODAY
 
     # 처분 방식
     probs = PROBS_DISPOSAL_GOOD if condition in ['신품', '중고품'] else PROBS_DISPOSAL_BAD
@@ -423,6 +423,8 @@ for row in df_operation.itertuples():
             result_action, reason = step_process_return(ctx, event_date, is_early)
             
             if result_action == '재사용':
+                # 재사용 시, 다음 루프의 이력 생성을 위해 현재 상태를 '반납'으로 명시
+                ctx['curr_status'] = '반납'
                 continue # 루프 처음으로 (운용신청 다시 함)
             elif result_action == '불용진행':
                 step_process_disuse(ctx, '불용진행', reason)

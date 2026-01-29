@@ -95,7 +95,7 @@ static_cols = [
 df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
 df_scd_raw = pd.merge(df_hist, df_static, on='물품고유번호', how='left')
 
-# 3. [Fix] 부서 정보 복원 (리뷰 반영)
+# 3-2. [Fix] 부서 정보 복원 (리뷰 반영)
 # 운용대장은 반납 시 부서가 비어있으므로, df_req(운용신청)에서 최근 부서를 가져와 채움
 if not df_req.empty:
     dept_map = df_req.sort_values('운용신청일자').drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
@@ -110,7 +110,7 @@ df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime(
 df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
 df_scd_raw = df_scd_raw.fillna('')
 
-# 4. 그룹핑 및 수량 집계
+# 5. 그룹핑 및 수량 집계
 group_cols_scd = [
     'G2B_목록번호', 'G2B_목록명', '캠퍼스',
     '취득일자', '취득금액', '정리일자', 
