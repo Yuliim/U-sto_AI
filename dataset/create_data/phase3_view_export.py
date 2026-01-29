@@ -22,6 +22,13 @@ try:
     df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))
     df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
 
+    # [Fix] 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용신청 이력 로드
+    path_req = os.path.join(LOAD_DIR, '04_02_operation_req_list.csv')
+    if os.path.exists(path_req):
+        df_req = pd.read_csv(path_req)
+    else:
+        df_req = pd.DataFrame(columns=['물품고유번호', '운용부서', '운용신청일자'])
+        
     # 데이터 프레임 전체의 NaN(결측치)를 빈 문자열로 치환 (문자열 컬럼만)
     # 날짜나 숫자는 그대로 두어야 오류가 안 남
     str_cols = ['비고', '운용부서', '운용상태', '승인상태', '사유', '물품상태']
@@ -59,27 +66,13 @@ if set(group_cols_op).issubset(df_op.columns):
 else:
     print("   ⚠️ 경고: 04_01 파일에 필요한 컬럼이 부족합니다.")
 
-# [06-01] 물품 불용/처분 관리 (View 생성 시 안전성 보강)
-# Phase 2에서 리스트에 '내용연수' 등을 안 넣었을 수도 있으므로, df_op와 병합하여 정보 채움
-print("   - [06-01] 불용 물품 목록 생성 중 (Master 정보 병합)...")
-
-# 병합에 사용할 Master 정보 (변하지 않는 속성)
+# [06-01] 불용 물품 목록
+# 병합에 사용할 Master 정보
 master_cols = ['물품고유번호', '내용연수', '취득금액', '취득일자', '정리일자', 'G2B_목록명']
 df_master_info = df_op[master_cols].drop_duplicates(subset=['물품고유번호'])
-
-# 불용 목록에 Master 정보 병합 (Suffix 방지 위해 컬럼 확인)
-# df_du에 이미 있는 컬럼은 제외하고 병합
 cols_to_merge = [c for c in master_cols if c not in df_du.columns or c == '물품고유번호']
 view_du_item = pd.merge(df_du, df_master_info[cols_to_merge], on='물품고유번호', how='left')
-
-# 필요한 컬럼만 선택
-target_cols_du = ['G2B_목록번호', 'G2B_목록명', '물품고유번호', '취득일자', '취득금액', '정리일자', '불용일자','물품상태','내용연수']
-# 만약 여전히 없는 컬럼이 있다면 에러 방지
-valid_cols_du = [c for c in target_cols_du if c in view_du_item.columns]
-view_du_item = view_du_item[valid_cols_du]
-
 view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
-
 
 # [07-01] 보유 현황 조회 (SCD Type 2 History)
 print("   - [07-01] 보유 현황(과거 시점 조회용) 데이터 생성 중...")
@@ -100,15 +93,22 @@ static_cols = [
     '내용연수', '승인상태', '취득정리구분','운용부서', '운용부서코드', '비고'
 ]
 df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
-
-# 병합
 df_scd_raw = pd.merge(df_hist, df_static, on='물품고유번호', how='left')
 
-# 운용부서 빈값 처리 (빈칸 그대로 두거나 '운용부서없음'으로 표시)
-df_scd_raw['운용부서'] = df_scd_raw['운용부서'].fillna('')
+# 3. [Fix] 부서 정보 복원 (리뷰 반영)
+# 운용대장은 반납 시 부서가 비어있으므로, df_req(운용신청)에서 최근 부서를 가져와 채움
+if not df_req.empty:
+    dept_map = df_req.sort_values('운용신청일자').drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
+    df_scd_raw = pd.merge(df_scd_raw, dept_map, on='물품고유번호', how='left', suffixes=('', '_req'))
+    # 이력 자체의 부서가 비어있으면 신청 당시 부서로 채움
+    df_scd_raw['운용부서'] = df_scd_raw['운용부서'].replace('', pd.NA).fillna(df_scd_raw['운용부서_req']).fillna('')
+    df_scd_raw = df_scd_raw.drop(columns=['운용부서_req'])
 
-# 상태값 매핑: 이력 데이터의 '(변경)운용상태'가 그 당시의 실제 상태
+# 4. 상태값 매핑 및 포맷팅
 df_scd_raw['운용상태'] = df_scd_raw['(변경)운용상태']
+df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime('%Y-%m-%d')
+df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
+df_scd_raw = df_scd_raw.fillna('')
 
 # 4. 그룹핑 및 수량 집계
 group_cols_scd = [
@@ -118,15 +118,7 @@ group_cols_scd = [
     '취득정리구분', '운용부서코드', '비고',
     '유효시작일자', '유효종료일자'
 ]
-
-# 날짜 포맷팅
-df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime('%Y-%m-%d')
-df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
-df_scd_raw = df_scd_raw.fillna('')
-
 view_inventory_scd = df_scd_raw.groupby(group_cols_scd).size().reset_index(name='수량')
-
-# 5. 최종 저장
 view_inventory_scd.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황_이력기반.csv'), index=False, encoding='utf-8-sig')
 
 # ---------------------------------------------------------
@@ -162,4 +154,21 @@ if not df_du.empty:
 else:
     print("   ℹ️ 불용 데이터가 없어 검증 건너뜀.")
 
+# [Fix] 처분 상태 동기화 검증 (승인 상태 고려)
+if not df_dp.empty:
+    # 처분 목록 중 '확정'인 건들만 추출
+    confirmed_disposal_ids = df_dp[df_dp['승인상태'] == '확정']['물품고유번호'].unique()
+    
+    # 운용대장에서 해당 ID 조회
+    op_status = df_op[df_op['물품고유번호'].isin(confirmed_disposal_ids)]['운용상태']
+    
+    # 상태가 '처분'이 아닌 것 카운트
+    err_cnt = (op_status != '처분').sum()
+    
+    print(f"3. 처분 상태(확정건): {'✅ PASS' if err_cnt == 0 else f'❌ FAIL ({err_cnt}건 미반영)'}")
+    
+    # (참고) 대기/반려 상태인 건수 출력
+    pending_cnt = len(df_dp) - len(confirmed_disposal_ids)
+    if pending_cnt > 0:
+        print(f"   ℹ️ 참고: 처분 심사 대기/반려 중인 건수: {pending_cnt}건 (이들은 '불용' 상태 유지됨)")
 print("\n🎉 모든 작업이 완료되었습니다.")

@@ -14,7 +14,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
-# Phase 1 결과물 로드
 try:
     file_path = os.path.join(DATA_DIR, '03_01_acquisition_master.csv')
     df_acq = pd.read_csv(file_path)
@@ -43,7 +42,7 @@ DEPT_MASTER_DATA = [
 # 출력 상태 확률 (출력, 미출력)
 PROBS_PRINT_STATUS = [0.2, 0.8]
 
-# 반납 발생 확률 (현실적으로 낮춤)
+# 반납 발생 확률
 PROB_EARLY_RETURN = 0.01     # 초기 반납(신품, 잉여) 확률: 1%
 PROB_RETURN_OVER_3Y = 0.05   # 3년 초과 반납 확률: 5%
 PROB_RETURN_OVER_5Y = 0.15   # 5년 초과(내구연한) 반납 확률: 15%
@@ -69,17 +68,24 @@ METHODS_DISPOSAL = ['매각', '폐기', '멸실', '도난']
 PROBS_DISPOSAL_GOOD = [0.85, 0.13, 0.01, 0.01] # 상태 좋음
 PROBS_DISPOSAL_BAD = [0.03, 0.95, 0.01, 0.01]  # 상태 나쁨 
 
-# ---------------------------------------------------------
-# 1. 데이터 분화 (Explosion) & 고유번호 부여
-# ---------------------------------------------------------
-# 승인상태가 '확정'인 건만 운용 대장으로 넘어감
-df_confirmed = df_acq[df_acq['승인상태'] == '확정'].copy()
+# 기준일자 (오늘)
+now = datetime.now()
+TODAY = datetime(now.year, now.month, now.day)
 
-# 행 복제 (수량 N -> N개 행)
-df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량'])].reset_index(drop=True)
-df_operation['수량'] = 1
+# ---------------------------------------------------------
+# 1. 헬퍼 함수 & 데이터 구조 초기화
+# ---------------------------------------------------------
+# 결과 저장을 위한 전역 리스트
+results = {
+    'req': [],      # 운용신청
+    'return': [],   # 반납
+    'disuse': [],   # 불용
+    'disposal': [], # 처분
+    'history': []   # 이력
+}
 
 def create_asset_ids(df: pd.DataFrame) -> pd.Series:
+    """자산 고유번호 생성 로직 (M + 연도 + 시퀀스)"""
     acq_dates = pd.to_datetime(df['취득일자'])
     year_strs = acq_dates.dt.strftime('%Y')
     seq_strs = (
@@ -89,468 +95,364 @@ def create_asset_ids(df: pd.DataFrame) -> pd.Series:
     )
     return "M" + year_strs + seq_strs
 
+def add_history(asset_id, date_str, prev_stat, curr_stat, reason, user_tuple=STAFF_USER):
+    """이력 추가 헬퍼 함수"""
+    results['history'].append({
+        '물품고유번호': asset_id,
+        '변경일자': date_str,
+        '(이전)운용상태': prev_stat,
+        '(변경)운용상태': curr_stat,
+        '사유': reason,
+        '관리자명': user_tuple[1], '관리자ID': user_tuple[0],
+        '등록자명': user_tuple[1], '등록자ID': user_tuple[0]
+    })
+
+def get_approval_status_and_date(base_date, prob_dist, is_op_req=False):
+    """승인 상태 및 확정일자 결정 로직 (대기 몰림 반영)"""
+    # 상태 결정
+    if is_op_req:
+        # 운용 신청의 경우 날짜에 따라 확률 다름
+        days_diff = (TODAY - base_date).days
+        if days_diff <= 14:
+            status = np.random.choice(['확정', '대기', '반려'], p=[0.5, 0.4, 0.1])
+        else:
+            status = np.random.choice(['확정', '반려'], p=[0.99, 0.01])
+    else:
+        status = np.random.choice(STATUS_CHOICES, p=prob_dist)
+
+    # 날짜 결정
+    confirm_date = base_date
+    if status == '대기':
+        min_allowed = max(base_date, RECENT_WAIT_START)
+        if min_allowed > TODAY: min_allowed = TODAY
+        temp_date = fake.date_between(start_date=min_allowed, end_date=TODAY)
+        req_date_final = datetime(temp_date.year, temp_date.month, temp_date.day)
+        confirm_date = req_date_final # 대기는 신청일이 최근으로 밀림
+    elif status == '확정':
+        days_add = random.randint(3, 14) if is_op_req else random.randint(3, 14)
+        if not is_op_req: # 불용/처분은 조금 더 걸림
+             if prob_dist == PROBS_STATUS_DISUSE: days_add = random.randint(14, 30)
+             if prob_dist == PROBS_STATUS_DISPOSAL: days_add = random.randint(30, 90)
+        
+        confirm_date = base_date + timedelta(days=days_add)
+        if confirm_date > TODAY: confirm_date = TODAY
+    
+    return status, confirm_date, base_date if status != '대기' else confirm_date
+
+# ---------------------------------------------------------
+# 2. 단계별 상세 처리 함수 (Refactoring)
+# ---------------------------------------------------------
+
+def step_operation_req(ctx):
+    """A. 운용 신청/재신청 단계"""
+    # 컨텍스트에서 필요한 변수 추출
+    sim_date = ctx['sim_cursor_date']
+    asset_id = ctx['asset_id']
+    row = ctx['row']
+    
+    # 운용신청일 생성
+    op_req_date = sim_date + timedelta(days=random.randint(1, 14))
+    if op_req_date > TODAY: return False # 미래 시점이면 종료
+
+    # 승인 상태 및 날짜 계산
+    status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, None, is_op_req=True)
+    
+    # 데이터 적재
+    req_type = '신규운용' if ctx['need_initial_req'] else '재사용'
+    results['req'].append({
+        '운용신청일자': req_date_fixed.strftime('%Y-%m-%d'),
+        '등록일자': req_date_fixed.strftime('%Y-%m-%d'),
+        '운용확정일자': confirm_date.strftime('%Y-%m-%d') if status == '확정' else '',
+        '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
+        '승인상태': status,
+        'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
+        '물품고유번호': asset_id, 
+        '취득일자': row.취득일자, '취득금액': row.취득금액,
+        '운용부서': ctx['curr_dept_name'], '사용자': row.비고, '신청구분': req_type
+    })
+    
+    ctx['need_initial_req'] = False # 다음부터는 재사용
+
+    if status != '확정': return False # 확정 안되면 시뮬레이션 중단
+
+    # 상태 업데이트
+    use_start_date = confirm_date
+    ctx['sim_cursor_date'] = use_start_date
+    ctx['prev_status'] = ctx['curr_status']
+    ctx['curr_status'] = '운용'
+    
+    # 운용대장 업데이트 (메모리 상)
+    df_operation.at[ctx['idx'], '운용상태'] = '운용'
+    df_operation.at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
+    df_operation.at[ctx['idx'], '운용부서코드'] = ctx['curr_dept_code']
+    if ctx['loop_count'] == 1:
+        df_operation.at[ctx['idx'], '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
+
+    # 이력 추가
+    add_history(asset_id, confirm_date.strftime('%Y-%m-%d'), ctx['prev_status'], '운용', f'{req_type} 승인 및 사용 시작')
+    
+    return True
+
+def step_determine_event(ctx):
+    """B. 운용 중 사건 발생 결정"""
+    sim_date = ctx['sim_cursor_date']
+    acq_date = pd.to_datetime(ctx['row'].취득일자)
+    
+    age_days = (TODAY - acq_date).days
+    
+    next_event = '유지'
+    event_date = TODAY + timedelta(days=1)
+    is_early = False
+
+    # 1. 조기 반납 (1%)
+    if random.random() < PROB_EARLY_RETURN:
+        early_date = sim_date + timedelta(days=random.randint(1, 30))
+        if early_date > sim_date:
+            event_date = early_date
+            next_event = '반납'
+            is_early = True
+
+    # 2. 일반/노후 반납
+    if next_event == '유지' and age_days > (365 * 3):
+        prob = PROB_RETURN_OVER_5Y if age_days > (365 * 5) else PROB_RETURN_OVER_3Y
+        if random.random() < prob:
+            event_date = sim_date + timedelta(days=random.randint(30, 365))
+            next_event = '반납'
+            is_early = False
+            
+    # 3. 직권 불용 (8년 이상, 5%)
+    if next_event == '유지' and age_days > (365 * 8):
+        if random.random() < 0.05:
+            event_date = sim_date + timedelta(days=random.randint(30, 90))
+            next_event = '직권불용'
+
+    if event_date > TODAY: return '유지', event_date, False # 미래 사건은 유지로 처리
+
+    ctx['sim_cursor_date'] = event_date
+    return next_event, event_date, is_early
+
+def step_process_return(ctx, event_date, is_early):
+    """C-1. 반납 처리 및 재사용 여부 결정"""
+    # 사유 및 물품상태 결정
+    if is_early:
+        reason = '잉여물품'
+        condition = '신품'
+    else:
+        # 일반 반납 (잉여물품 제외한 나머지 사유 중 선택)
+        late_reasons = ['사용연한경과', '고장/파손', '불용결정', '사업종료']
+        late_probs = [0.5, 0.3, 0.1, 0.1]
+        reason = np.random.choice(late_reasons, p=late_probs)
+        
+        if reason == '고장/파손': condition = '정비필요품'
+        elif reason == '사용연한경과': condition = '폐품'
+        else: condition = '중고품'
+    
+    ctx['curr_condition'] = condition
+
+    # 승인 처리
+    status, confirm_date, req_date = get_approval_status_and_date(event_date, PROBS_STATUS_RETURN)
+    confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
+
+    # 반납 리스트 저장
+    results['return'].append({
+        '반납일자': req_date.strftime('%Y-%m-%d'),
+        '반납확정일자': confirm_str,
+        '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
+        '승인상태': status,
+        'G2B_목록번호': ctx['row'].G2B_목록번호, 'G2B_목록명': ctx['row'].G2B_목록명,
+        '물품고유번호': ctx['asset_id'], 
+        '취득일자': ctx['row'].취득일자,'취득금액': ctx['row'].취득금액,
+        '정리일자': ctx['clear_date_str'], 
+        '운용부서': ctx['curr_dept_name'], '운용상태': '운용', 
+        '물품상태': condition, '사유': reason
+    })
+
+    if status == '확정':
+        # 대장 및 이력 업데이트
+        df_operation.at[ctx['idx'], '운용상태'] = '반납'
+        df_operation.at[ctx['idx'], '운용부서'] = ''
+        add_history(ctx['asset_id'], confirm_str, '운용', '반납', reason)
+        
+        ctx['sim_cursor_date'] = confirm_date
+        
+        # 재사용 여부 결정 (신품 & 10% 확률)
+        if condition == '신품' and random.random() < 0.1:
+            # 부서 재배정
+            new_dept = random.choice(DEPT_MASTER_DATA)
+            ctx['curr_dept_code'] = new_dept[0]
+            ctx['curr_dept_name'] = new_dept[1]
+            return '재사용', reason
+        else:
+            return '불용진행', reason
+            
+    return '종료', reason
+
+def step_process_disuse(ctx, trigger_event, inherited_reason):
+    """C-2. 불용 및 처분 처리"""
+    # 불용 사유 및 상태 매핑
+    if trigger_event == '직권불용':
+        reason = '직권 불용(파손/노후)'
+        condition = '폐품'
+        prev_stat = '운용'
+    else: # 반납 후 불용
+        reason = inherited_reason
+        condition = ctx['curr_condition']
+        prev_stat = '반납'
+
+    # 잉여물품 보관 스킵 로직 (90%)
+    if reason == '잉여물품' and condition == '신품':
+        if random.random() < PROB_SURPLUS_STORE:
+            return # 불용 안하고 종료
+
+    # 불용 신청
+    du_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 14))
+    if du_date > TODAY: return
+
+    status, confirm_date, req_date = get_approval_status_and_date(du_date, PROBS_STATUS_DISUSE)
+    confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
+
+    # 대장 업데이트
+    if status == '확정':
+        df_operation.at[ctx['idx'], '운용상태'] = '불용'
+        add_history(ctx['asset_id'], confirm_str, prev_stat, '불용', reason, ADMIN_USER)
+        ctx['sim_cursor_date'] = confirm_date
+
+    # 불용 데이터 저장
+    results['disuse'].append({
+        '불용일자': req_date.strftime('%Y-%m-%d'),
+        '불용확정일자': confirm_str,
+        '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+        '승인상태': status,
+        'G2B_목록번호': ctx['row'].G2B_목록번호, 'G2B_목록명': ctx['row'].G2B_목록명,
+        '물품고유번호': ctx['asset_id'], 
+        '취득일자': ctx['row'].취득일자, '취득금액': ctx['row'].취득금액,
+        '정리일자': ctx['clear_date_str'],
+        '운용부서': ctx['curr_dept_name'] if trigger_event == '직권불용' else '', 
+        '운용상태' : prev_stat, 
+        '내용연수': ctx['row'].내용연수,
+        '물품상태': condition, '사유': reason
+    })
+
+    # 처분 진행 (불용 확정시에만)
+    if status == '확정':
+        step_process_disposal(ctx, condition, reason)
+
+def step_process_disposal(ctx, condition, disuse_reason):
+    """C-3. 처분 처리"""
+    dp_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 14))
+    if dp_date > TODAY: return
+
+    # 처분 방식
+    probs = PROBS_DISPOSAL_GOOD if condition in ['신품', '중고품'] else PROBS_DISPOSAL_BAD
+    method = np.random.choice(METHODS_DISPOSAL, p=probs)
+
+    status, confirm_date, req_date = get_approval_status_and_date(dp_date, PROBS_STATUS_DISPOSAL)
+    confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
+
+    if status == '확정':
+        df_operation.at[ctx['idx'], '운용상태'] = '처분'
+        add_history(ctx['asset_id'], confirm_str, '불용', '처분', f"{method} 완료", ADMIN_USER)
+
+    results['disposal'].append({
+        '처분일자': req_date.strftime('%Y-%m-%d'),
+        '처분확정일자': confirm_str,
+        '처분정리구분': method,
+        '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+        '승인상태': status,
+        'G2B_목록번호': ctx['row'].G2B_목록번호, 'G2B_목록명': ctx['row'].G2B_목록명,
+        '물품고유번호': ctx['asset_id'], 
+        '취득일자': ctx['row'].취득일자, '취득금액': ctx['row'].취득금액,
+        '처분방식': method, '물품상태': condition, '사유': disuse_reason,
+        '불용일자': ctx['sim_cursor_date'].strftime('%Y-%m-%d'),
+        '내용연수': ctx['row'].내용연수, '정리일자': ctx['clear_date_str']
+    })
+
+# ---------------------------------------------------------
+# 3. 메인 시뮬레이션 루프
+# ---------------------------------------------------------
+
+# 데이터 전처리 (Explosion & ID Generation)
 print("⚙️ [Phase 2] 개별 자산 분화 및 고유번호 생성 중...")
+df_confirmed = df_acq[df_acq['승인상태'] == '확정'].copy()
+df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량'])].reset_index(drop=True)
+df_operation['수량'] = 1
 df_operation['물품고유번호'] = create_asset_ids(df_operation)
-
-# 초기 상태 설정
 df_operation['운용상태'] = '취득'
-
-# ---------------------------------------------------------
-# 2. 생애주기 시뮬레이션 (Lifecycle Loop)
-# ---------------------------------------------------------
-operation_history_list = [] 
-operation_req_list = []     
-return_list = [] 
-disuse_list = [] 
-disposal_list = [] 
-
-# 기준일자 (오늘)
-now = datetime.now()
-today = datetime(now.year, now.month, now.day)
 
 print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (운용 Loop)...")
 
 for row in df_operation.itertuples():
-    idx = row.Index 
+    # Context 객체: 함수 간 상태 공유용
+    clear_date = pd.to_datetime(row.정리일자) if pd.notna(row.정리일자) else pd.to_datetime(row.취득일자)
     
-    # -------------------------------------------------------
-    # [초기 변수 세팅]
-    # -------------------------------------------------------
-    g2b_full_code = row.G2B_목록번호
-    g2b_name = row.G2B_목록명
-    asset_id = row.물품고유번호
-    acq_date = pd.to_datetime(row.취득일자)
-    total_amount = row.취득금액
-    life_years = row.내용연수
-    
-    # 정리일자 처리
-    if pd.isna(row.정리일자) or row.정리일자 == '':
-        clear_date = acq_date 
-        clear_date_str = ''
-    else:
-        clear_date = pd.to_datetime(row.정리일자)
-        clear_date_str = clear_date.strftime('%Y-%m-%d')
+    ctx = {
+        'idx': row.Index,
+        'row': row,
+        'asset_id': row.물품고유번호,
+        'sim_cursor_date': clear_date,
+        'clear_date_str': clear_date.strftime('%Y-%m-%d'),
+        'curr_dept_name': row.운용부서,
+        'curr_dept_code': row.운용부서코드,
+        'curr_status': '취득',
+        'prev_status': '-',
+        'curr_condition': '신품',
+        'need_initial_req': True,
+        'loop_count': 0
+    }
 
-    # 상태 추적 변수 (Loop 내에서 변화)
-    current_dept_name = row.운용부서
-    current_dept_code = row.운용부서코드
-    current_status = '취득'
-    current_condition = '신품'
-    
-    # 시뮬레이션 커서 날짜 (이 날짜를 기준으로 사건 발생)
-    sim_cursor_date = clear_date 
+    # 1. 취득 이력 생성
+    add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
 
-    # -------------------------------------------------------
-    # 2-0. 취득 기록
-    # -------------------------------------------------------
-    operation_history_list.append({
-        '물품고유번호': asset_id,
-        '변경일자': clear_date.strftime('%Y-%m-%d'),
-        '(이전)운용상태': '-',
-        '(변경)운용상태': '취득',
-        '사유': '신규 취득',
-        '관리자명': STAFF_USER[1], '관리자ID': STAFF_USER[0],
-        '등록자명': STAFF_USER[1], '등록자ID': STAFF_USER[0]
-    })
-
-    # -------------------------------------------------------
-    # [Main Lifecycle Loop] 
-    # 운용 -> (유지/반납/직권불용) -> (재사용/불용) -> 처분
-    # -------------------------------------------------------
+    # 2. Lifecycle Loop (운용 -> 반납 -> 재사용/불용 -> 처분)
     active_flag = True
-    loop_count = 0  
-    need_initial_req = True # 첫 루프는 신규 운용 신청
+    while active_flag and ctx['loop_count'] < 3:
+        ctx['loop_count'] += 1
 
-    while active_flag and loop_count < 3:
-        loop_count += 1
-        
-        # ===================================================
-        # A. [운용 신청/재신청 단계]
-        # ===================================================
-        # 운용신청일 = 정리일자(또는 이전 사건일) + 1일~2주 사이
-        op_req_date = sim_cursor_date + timedelta(days=random.randint(1, 14))
-        
-        if op_req_date > today: break
-            
-        op_req_date_str = op_req_date.strftime('%Y-%m-%d')
-        
-        # 승인 상태 결정 로직 (최신 대기 몰림 반영)
-        days_diff = (today - op_req_date).days
-        op_status = '확정'
-        op_confirm_date_str = ''
-        
-        if days_diff <= 14: # 최근 신청건
-            op_status = np.random.choice(['확정', '대기', '반려'], p=[0.5, 0.4, 0.1])
-        else: # 과거 신청건
-            op_status = np.random.choice(['확정', '반려'], p=[0.99, 0.01])
+        # A. 운용 신청
+        if not step_operation_req(ctx):
+            break # 신청 안되거나 승인 안되면 종료
 
-        # 확정일자 (신청 후 3일 ~ 14일)
-        if op_status == '확정':
-            confirm_days = random.randint(3, 14)
-            op_confirm_date = op_req_date + timedelta(days=confirm_days)
-            if op_confirm_date > today: op_confirm_date = today
-            op_confirm_date_str = op_confirm_date.strftime('%Y-%m-%d')
-        else:
-            op_confirm_date = op_req_date # 미확정이면 커서 이동용으로만 사용
+        # B. 이벤트 결정 (유지, 반납, 직권불용)
+        event_type, event_date, is_early = step_determine_event(ctx)
 
-        # 운용 신청 데이터 적재
-        req_type = '신규운용' if need_initial_req else '재사용'
-        op_req_row = {
-            '운용신청일자': op_req_date_str,
-            '등록일자': op_req_date_str,
-            '운용확정일자': op_confirm_date_str,
-            '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
-            '승인상태': op_status,
-            'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-            '물품고유번호': asset_id, 
-            '취득일자': row.취득일자, '취득금액': total_amount,
-            '운용부서': current_dept_name, '사용자': row.비고, '신청구분': req_type
-        }
-        operation_req_list.append(op_req_row)
-        need_initial_req = False 
-
-        # 확정되지 않으면 루프 종료 (운용 시작 안됨)
-        if op_status != '확정':
-            active_flag = False
+        if event_type == '유지':
             break
 
-        # [운용 시작] 상태 업데이트
-        use_start_date = op_confirm_date
-        sim_cursor_date = use_start_date # 커서 이동
-        
-        prev_status = current_status
-        current_status = '운용'
-
-        # 대장 반영
-        df_operation.at[idx, '운용상태'] = '운용'
-        df_operation.at[idx, '운용부서'] = current_dept_name
-        df_operation.at[idx, '운용부서코드'] = current_dept_code
-        
-        # 출력상태 (랜덤)
-        if loop_count == 1: 
-             df_operation.at[idx, '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
-
-        # 이력
-        operation_history_list.append({
-            '물품고유번호': asset_id,
-            '변경일자': op_confirm_date_str,
-            '(이전)운용상태': prev_status, '(변경)운용상태': '운용',
-            '사유': f'{req_type} 승인 및 사용 시작',
-            '관리자명': STAFF_USER[1], '관리자ID': STAFF_USER[0],
-            '등록자명': STAFF_USER[1], '등록자ID': STAFF_USER[0]
-        })
-
-        # ===================================================
-        # B. [운용 중 사건 발생 결정] - 반납/직권불용/유지 결정
-        # ===================================================
-        next_event = '유지' # 기본값
-        event_date = today + timedelta(days=1) # 기본값(미래)
-
-        # 현재 물품의 나이 계산
-        age_days = (today - acq_date).days
-        days_since_use_start = (today - use_start_date).days
-        
-        # ---------------------------------------------------
-        # 시나리오 1: 조기 반납 (신품/잉여)
-        # 조건: 운용 시작한 지 얼마 안 됨 + 확률 1%
-        # ---------------------------------------------------
-        is_early_return = False
-        if random.random() < PROB_EARLY_RETURN:
-            # 운용확정일로부터 30일 이내 반납 가능한지 체크
-            # (단, 현재 시뮬레이션 시점이 해당 기간을 지나지 않았거나, 과거 데이터 생성용일 때)
+        # C-1. 반납 처리
+        elif event_type == '반납':
+            result_action, reason = step_process_return(ctx, event_date, is_early)
             
-            # 반납일 = 운용확정일 + 1~30일
-            early_return_date = use_start_date + timedelta(days=random.randint(1, 30))
-            
-            # 시간 역행 방지: 계산된 반납일이 sim_cursor_date보다 뒤여야 함
-            if early_return_date > sim_cursor_date:
-                event_date = early_return_date
-                next_event = '반납'
-                is_early_return = True
-
-        # ---------------------------------------------------
-        # 시나리오 2: 일반/노후 반납 (고장/내구연한)
-        # 조건: 취득 후 3년 이상 경과 (하자/노후는 3년 이후부터)
-        # ---------------------------------------------------
-        if next_event == '유지' and age_days > (365 * 3):
-            # 확률 결정
-            prob_return = PROB_RETURN_OVER_3Y # 5%
-            if age_days > (365 * 5): 
-                prob_return = PROB_RETURN_OVER_5Y # 15%
-            
-            if random.random() < prob_return:
-                # 반납일 = 현재 시점 + 30~365일 사이 (미래 사건)
-                late_return_date = sim_cursor_date + timedelta(days=random.randint(30, 365))
-                
-                event_date = late_return_date
-                next_event = '반납'
-                is_early_return = False
-
-        # ---------------------------------------------------
-        # 시나리오 3: 직권 불용 (아주 오래된 물품)
-        # ---------------------------------------------------
-        if next_event == '유지' and age_days > (365 * 8): # 8년 넘은 것들
-            if random.random() < 0.05: # 5% 확률로 직권 폐기
-                event_date = sim_cursor_date + timedelta(days=random.randint(30, 90))
-                next_event = '직권불용'
-
-        # 미래 날짜 체크
-        if event_date > today:
-            active_flag = False
-            break
-        
-        sim_cursor_date = event_date # 커서 이동
-
-        # ===================================================
-        # C. [사건 처리 로직]
-        # ===================================================
-        
-        # CASE 1: 유지 (Loop 종료)
-        if next_event == '유지':
-            active_flag = False
-            break
-
-        # CASE 2: 반납
-        elif next_event == '반납':
-            # [사유 및 상태 결정 로직 분기]
-            if is_early_return:
-                # 조기 반납 -> 무조건 '잉여물품', 상태 '신품'
-                return_reason = '잉여물품'
-                current_condition = '신품'
+            if result_action == '재사용':
+                continue # 루프 처음으로 (운용신청 다시 함)
+            elif result_action == '불용진행':
+                step_process_disuse(ctx, '불용진행', reason)
+                break # 불용으로 가면 운용 루프는 끝
             else:
-                # 일반 반납 -> 고장, 내구연한 등 (잉여물품 제외)
-                # 3년 넘은 물건을 잉여라고 하진 않으므로 제외
-                late_reasons = ['사용연한경과', '고장/파손', '불용결정', '사업종료']
-                late_probs = [0.5, 0.3, 0.1, 0.1]
-                return_reason = np.random.choice(late_reasons, p=late_probs)
-                
-                if return_reason == '고장/파손': current_condition = '정비필요품'
-                elif return_reason == '사용연한경과': current_condition = '폐품'
-                else: current_condition = '중고품'
+                break # 종료
 
-            # 반납 승인 상태
-            return_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_RETURN)
-            
-            # [대기 상태 처리] 날짜를 최근으로 재설정
-            if return_status == '대기':
-                min_allowed = max(event_date, RECENT_WAIT_START)
-                if min_allowed > today: min_allowed = today
-                temp_date = fake.date_between(start_date=min_allowed, end_date=today)
-                return_date = datetime(temp_date.year, temp_date.month, temp_date.day)
-            else:
-                return_date = event_date
-
-            # 반납 확정일자 (신청 + 3일 ~ 2주)
-            rt_confirm_date_str = ''
-            rt_confirm_date = return_date # 초기화
-
-            if return_status == '확정':
-                rt_confirm_date = return_date + timedelta(days=random.randint(3, 14))
-                if rt_confirm_date > today: rt_confirm_date = today
-                rt_confirm_date_str = rt_confirm_date.strftime('%Y-%m-%d')
-
-                # 대장 업데이트
-                df_operation.at[idx, '운용상태'] = '반납'
-                df_operation.at[idx, '운용부서'] = ''
-                
-                # 이력
-                operation_history_list.append({
-                    '물품고유번호': asset_id,
-                    '변경일자': rt_confirm_date_str,
-                    '(이전)운용상태': '운용', '(변경)운용상태': '반납',
-                    '사유': return_reason,
-                    '관리자명': STAFF_USER[1], '관리자ID': STAFF_USER[0],
-                    '등록자명': STAFF_USER[1], '등록자ID': STAFF_USER[0]
-                })
-                sim_cursor_date = rt_confirm_date # 커서 이동
-
-            # 반납 데이터 저장
-            return_list.append({
-                '반납일자': return_date.strftime('%Y-%m-%d'),
-                '반납확정일자': rt_confirm_date_str,
-                '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
-                '승인상태': return_status,
-                'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                '물품고유번호': asset_id, '취득일자': row.취득일자,'취득금액': total_amount,
-                '정리일자': clear_date_str, 
-                '운용부서': current_dept_name, '운용상태': '운용', 
-                '물품상태': current_condition, '사유': return_reason
-            })
-
-            # [반납 후 분기] 확정 건에 한해 재사용 vs 불용 결정
-            if return_status == '확정':
-                # 재사용 조건: 신품이고 10% 확률
-                if current_condition == '신품' and random.random() < 0.1:
-                    # -> 재사용 결정! (부서 변경 후 Loop 처음으로)
-                    new_dept = random.choice(DEPT_MASTER_DATA)
-                    current_dept_code = new_dept[0]
-                    current_dept_name = new_dept[1]
-                    continue 
-                else:
-                    # -> 불용 결정! (아래 불용 로직으로 진입)
-                    next_event = '불용진행'
-            else:
-                # 대기/반려면 루프 종료
-                active_flag = False
-                break
-        
-        # CASE 3: 직권 불용 OR 반납 후 불용 (Loop 종료 예정)
-        if next_event == '직권불용' or next_event == '불용진행':
-            
-            disuse_reason_mapped = ''
-            prev_status_for_disuse = ''
-
-            if next_event == '직권불용':
-                disuse_reason_mapped = '직권 불용(파손/노후)'
-                current_condition = '폐품' # 직권불용은 주로 폐품
-                prev_status_for_disuse = '운용'
-            else:
-                disuse_reason_mapped = return_reason # 반납 사유 승계
-                prev_status_for_disuse = '반납'
-
-            # 잉여물품 + 신품 -> 보관(불용 스킵) 확률 체크
-            skip_disuse = False
-            if disuse_reason_mapped == '잉여물품' and current_condition == '신품':
-                if random.random() < PROB_SURPLUS_STORE:
-                    skip_disuse = True
-            
-            if skip_disuse:
-                active_flag = False
-                break
-
-            # 불용 신청 (사건일로부터 1~14일 뒤)
-            du_date = sim_cursor_date + timedelta(days=random.randint(1, 14))
-            
-            # 승인 상태 결정
-            disuse_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISUSE)
-            
-            # [대기 상태 처리]
-            if disuse_status == '대기':
-                min_allowed = max(du_date, RECENT_WAIT_START)
-                if min_allowed > today: min_allowed = today
-                temp_date = fake.date_between(start_date=min_allowed, end_date=today)
-                du_date = datetime(temp_date.year, temp_date.month, temp_date.day)
-            
-            # 날짜 체크
-            if du_date > today: 
-                active_flag = False
-                break
-
-            # 불용 확정 (신청 + 14일 ~ 30일)
-            du_confirm_str = ''
-            du_confirm_date = du_date
-
-            if disuse_status == '확정':
-                du_confirm_date = du_date + timedelta(days=random.randint(14, 30))
-                if du_confirm_date > today: du_confirm_date = today
-                du_confirm_str = du_confirm_date.strftime('%Y-%m-%d')
-
-                # 대장 업데이트
-                df_operation.at[idx, '운용상태'] = '불용'
-                
-                # 이력
-                operation_history_list.append({
-                    '물품고유번호': asset_id,
-                    '변경일자': du_confirm_str,
-                    '(이전)운용상태': prev_status_for_disuse, '(변경)운용상태': '불용',
-                    '사유': disuse_reason_mapped,
-                    '관리자명': ADMIN_USER[1], '관리자ID': ADMIN_USER[0],
-                    '등록자명': ADMIN_USER[1], '등록자ID': ADMIN_USER[0]
-                })
-                sim_cursor_date = du_confirm_date
-
-            # 불용 데이터 저장
-            disuse_list.append({
-                '불용일자': du_date.strftime('%Y-%m-%d'),
-                '불용확정일자': du_confirm_str,
-                '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
-                '승인상태': disuse_status,
-                'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
-                '정리일자': clear_date_str,
-                '운용부서': current_dept_name if next_event == '직권불용' else '', 
-                '운용상태' : prev_status_for_disuse, 
-                '내용연수': life_years,
-                '물품상태': current_condition, '사유': disuse_reason_mapped
-            })
-
-            # [처분 단계] (불용 확정 시에만)
-            if disuse_status == '확정':
-                # 처분 신청 (불용확정 + 1~14일)
-                dp_date = sim_cursor_date + timedelta(days=random.randint(1, 14))
-                
-                # 처분 방식 결정
-                if current_condition in ['신품', '중고품']:
-                    method = np.random.choice(METHODS_DISPOSAL, p=PROBS_DISPOSAL_GOOD)
-                else:
-                    method = np.random.choice(METHODS_DISPOSAL, p=PROBS_DISPOSAL_BAD)
-                
-                # 승인 상태
-                dp_status = np.random.choice(STATUS_CHOICES, p=PROBS_STATUS_DISPOSAL)
-                
-                # [대기 상태 처리]
-                if dp_status == '대기':
-                    min_allowed = max(dp_date, RECENT_WAIT_START)
-                    if min_allowed > today: min_allowed = today
-                    temp_date = fake.date_between(start_date=min_allowed, end_date=today)
-                    dp_date = datetime(temp_date.year, temp_date.month, temp_date.day)
-
-                if dp_date <= today:
-                    dp_confirm_str = ''
-                    
-                    if dp_status == '확정':
-                        # 처분 확정 (신청 + 30일 ~ 90일)
-                        dp_confirm_date = dp_date + timedelta(days=random.randint(30, 90))
-                        if dp_confirm_date > today: dp_confirm_date = today
-                        dp_confirm_str = dp_confirm_date.strftime('%Y-%m-%d')
-
-                        # 대장 업데이트 (최종)
-                        df_operation.at[idx, '운용상태'] = '처분'
-                        
-                        # 이력
-                        operation_history_list.append({
-                            '물품고유번호': asset_id,
-                            '변경일자': dp_confirm_str,
-                            '(이전)운용상태': '불용', '(변경)운용상태': '처분',
-                            '사유': f"{method} 완료",
-                            '관리자명': ADMIN_USER[1], '관리자ID': ADMIN_USER[0],
-                            '등록자명': ADMIN_USER[1], '등록자ID': ADMIN_USER[0]
-                        })
-
-                    # 처분 데이터 저장
-                    disposal_list.append({
-                        '처분일자': dp_date.strftime('%Y-%m-%d'),
-                        '처분확정일자': dp_confirm_str,
-                        '처분정리구분': method,
-                        '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
-                        '승인상태': dp_status,
-                        'G2B_목록번호': g2b_full_code, 'G2B_목록명': g2b_name,
-                        '물품고유번호': asset_id, '취득일자': row.취득일자, '취득금액': total_amount,
-                        '처분방식': method, '물품상태': current_condition, '사유': disuse_reason_mapped,
-                        '불용일자': du_confirm_str, '내용연수': life_years, '정리일자': clear_date_str
-                    })
-
-            # 불용/처분 단계까지 오면 루프 종료
-            active_flag = False
+        # C-2. 직권 불용 처리
+        elif event_type == '직권불용':
+            ctx['sim_cursor_date'] = event_date
+            step_process_disuse(ctx, '직권불용', '')
             break
 
 # ---------------------------------------------------------
-# 3. 데이터프레임 변환 및 저장
+# 4. 파일 저장
 # ---------------------------------------------------------
-df_op_req = pd.DataFrame(operation_req_list)
-df_return = pd.DataFrame(return_list)
-df_disuse = pd.DataFrame(disuse_list)
-df_disposal = pd.DataFrame(disposal_list)
-df_history = pd.DataFrame(operation_history_list)
+print("💾 [Phase 2] 결과 저장 중...")
 
-# 저장
-# [04-01] 물품 운용 대장 목록
+df_op_req = pd.DataFrame(results['req'])
+df_return = pd.DataFrame(results['return'])
+df_disuse = pd.DataFrame(results['disuse'])
+df_disposal = pd.DataFrame(results['disposal'])
+df_history = pd.DataFrame(results['history'])
+
 cols_operation = [
     'G2B_목록번호', 'G2B_목록명', '물품고유번호', '캠퍼스','취득일자', '취득금액', '정리일자', 
     '운용부서', '운용상태', '내용연수', '출력상태', '승인상태', '취득정리구분', '운용부서코드', '비고'
 ]
 
-# 누락 컬럼 보정 (안전장치)
+# 누락 컬럼 보정
 if '비고' not in df_operation.columns:
     add_info = df_acq[['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '비고', '승인상태']].drop_duplicates()
     df_operation = df_operation.merge(
@@ -561,39 +463,15 @@ if '비고' not in df_operation.columns:
 
 df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 
-# [04-02] 운용 신청 목록
-if not df_op_req.empty:
-    df_op_req.to_csv(os.path.join(DATA_DIR, '04_02_operation_req_list.csv'), index=False, encoding='utf-8-sig')
-
-# [04-03] 반납 관련
-if not df_return.empty:
-    df_return.to_csv(os.path.join(DATA_DIR, '04_03_return_list.csv'), index=False, encoding='utf-8-sig')
-
-# [05-01] 불용 관련
-if not df_disuse.empty:
-    df_disuse.to_csv(os.path.join(DATA_DIR, '05_01_disuse_list.csv'), index=False, encoding='utf-8-sig')
-
-# [06-01] 처분 관련
-if not df_disposal.empty:
-    df_disposal.to_csv(os.path.join(DATA_DIR, '06_01_disposal_list.csv'), index=False, encoding='utf-8-sig')
-
-# [물품상태이력]
+if not df_op_req.empty: df_op_req.to_csv(os.path.join(DATA_DIR, '04_02_operation_req_list.csv'), index=False, encoding='utf-8-sig')
+if not df_return.empty: df_return.to_csv(os.path.join(DATA_DIR, '04_03_return_list.csv'), index=False, encoding='utf-8-sig')
+if not df_disuse.empty: df_disuse.to_csv(os.path.join(DATA_DIR, '05_01_disuse_list.csv'), index=False, encoding='utf-8-sig')
+if not df_disposal.empty: df_disposal.to_csv(os.path.join(DATA_DIR, '06_01_disposal_list.csv'), index=False, encoding='utf-8-sig')
 df_history.to_csv(os.path.join(DATA_DIR, '99_asset_status_history.csv'), index=False, encoding='utf-8-sig')
 
 print("🎉 [Phase 2] 생애주기 시뮬레이션 및 파일 생성 완료!")
-print(f"   - 운용 자산(개별): {len(df_operation)}건")
-print(f"   - 운용 신청: {len(df_op_req)}건 (신규 + 재사용)")
-print(f"   - 반납 발생: {len(df_return)}건")
-print(f"   - 불용 발생: {len(df_disuse)}건")
-print(f"   - 처분 발생: {len(df_disposal)}건")
-# 상태 변경 이력 상세 출력
-print(f"   - 상태 변경 이력(Total): {len(df_history)}건")
+print(f"   - 운용 자산: {len(df_operation)}건")
+print(f"   - 상태 이력: {len(df_history)}건")
 if not df_history.empty:
-    # '(변경)운용상태' 별로 개수 집계
-    status_counts = df_history['(변경)운용상태'].value_counts()
-    
-    # 흐름 순서대로 보기 좋게 출력
-    check_order = ['취득', '운용', '반납', '불용', '처분']
-    for status in check_order:
-        count = status_counts.get(status, 0)
-        print(f"      └ {status}: {count}건")
+    for status in ['취득', '운용', '반납', '불용', '처분']:
+        print(f"      └ {status}: {len(df_history[df_history['(변경)운용상태'] == status])}건")
