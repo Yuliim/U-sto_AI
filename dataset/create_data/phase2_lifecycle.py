@@ -182,7 +182,7 @@ def step_operation_req(ctx):
 
     # 승인 상태 및 날짜 계산
     # event_type 명시
-    status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, event_type='op_req',is_op_req=True)
+    status, confirm_date, req_date_fixed = get_approval_status_and_date(op_req_date, event_type='op_req', is_op_req=True)
     
     # 재사용 차수 명시
     if ctx['need_initial_req']:
@@ -219,6 +219,7 @@ def step_operation_req(ctx):
     df_operation.at[ctx['idx'], '운용상태'] = '운용'
     df_operation.at[ctx['idx'], '운용부서'] = ctx['curr_dept_name']
     df_operation.at[ctx['idx'], '운용부서코드'] = ctx['curr_dept_code']
+    df_operation.at[ctx['idx'], '운용확정일자'] = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
     
     if ctx['loop_count'] == 1:
         df_operation.at[ctx['idx'], '출력상태'] = np.random.choice(['출력', '미출력'], p=PROBS_PRINT_STATUS)
@@ -245,11 +246,11 @@ def step_determine_event(ctx):
     # 1. 조기 반납 (1%)
     if random.random() < PROB_EARLY_RETURN:
         early_date = sim_date + timedelta(days=random.randint(1, 30))
-        if early_date > TODAY:
-            early_date = TODAY
-        event_date = early_date
-        next_event = '반납'
-        is_early = True
+        # 조기 반납일이 TODAY를 초과하면 조기 반납 이벤트를 설정하지 않는다.
+        if early_date <= TODAY:
+            event_date = early_date
+            next_event = '반납'
+            is_early = True
 
     # 2. 일반/노후 반납
     if next_event == '유지' and age_days > (365 * 3):
@@ -258,10 +259,9 @@ def step_determine_event(ctx):
             # 30일 이상 사용 조건
             if days_since_use >= 30:
                 calc_date = sim_date + timedelta(days=random.randint(30, 365))
-                if calc_date > sim_date:
-                    event_date = calc_date
-                    next_event = '반납'
-                    is_early = False
+                event_date = calc_date
+                next_event = '반납'
+                is_early = False
             
     # 3. 직권 불용 (8년 이상, 5%)
     if next_event == '유지' and age_days > (365 * 8):
@@ -328,8 +328,8 @@ def step_process_return(ctx, event_date, is_early):
 
     if status == '확정':
         # 대장 및 이력 업데이트
-        df_operation.at[ctx['idx'], '운용상태'] = '반납'
-        df_operation.at[ctx['idx'], '운용부서'] = ''
+        ctx['df_operation'].at[ctx['idx'], '운용상태'] = '반납'
+        ctx['df_operation'].at[ctx['idx'], '운용부서'] = ''
         add_history(ctx['asset_id'], confirm_str, '운용', '반납', reason)
         
         ctx['sim_cursor_date'] = confirm_date
@@ -385,7 +385,7 @@ def step_process_disuse(ctx, trigger_event, inherited_reason):
 
     # 대장 업데이트
     if status == '확정':
-        df_operation.at[ctx['idx'], '운용상태'] = '불용'
+        ctx['df_operation'].at[ctx['idx'], '운용상태'] = '불용'
         add_history(ctx['asset_id'], confirm_str, prev_stat, '불용', reason, ADMIN_USER)
         ctx['sim_cursor_date'] = confirm_date
 
@@ -426,7 +426,7 @@ def step_process_disposal(ctx, condition, disuse_reason):
     confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
 
     if status == '확정':
-        df_operation.at[ctx['idx'], '운용상태'] = '처분'
+        ctx['df_operation'].at[ctx['idx'], '운용상태'] = '처분'
         add_history(ctx['asset_id'], confirm_str, '불용', '처분', f"{method} 완료", ADMIN_USER)
 
     results['disposal'].append({
@@ -486,7 +486,7 @@ for row in df_operation.itertuples():
     add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
 
     # 2. Lifecycle Loop (운용 -> 반납 -> 재사용/불용 -> 처분)
-    while ctx['loop_count'] <=  MAX_REUSE_CYCLES:
+    while ctx['loop_count'] <  MAX_REUSE_CYCLES:
 
         # A. 운용 신청
         if not step_operation_req(ctx):
