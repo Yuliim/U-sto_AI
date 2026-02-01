@@ -22,7 +22,7 @@ try:
     df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))
     df_hist = pd.read_csv(os.path.join(LOAD_DIR, '99_asset_status_history.csv'))
 
-    # [Fix] 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용신청 이력 로드
+    # 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용신청 이력 로드
     path_req = os.path.join(LOAD_DIR, '04_02_operation_req_list.csv')
     if os.path.exists(path_req):
         df_req = pd.read_csv(path_req)
@@ -95,9 +95,9 @@ static_cols = [
 df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
 df_scd_raw = pd.merge(df_hist, df_static, on='물품고유번호', how='left')
 
-# 3-2. [Fix] 부서 정보 복원 (리뷰 반영)
+# 3-2. 부서 정보 복원 (리뷰 반영)
 # 운용대장은 반납 시 부서가 비어있으므로, df_req(운용신청)에서 최근 부서를 가져와 채움
-if (not df_req.empty) and ('운용부서' in df_req.columns):
+if not df_req.empty and {'물품고유번호', '운용부서', '운용신청일자'}.issubset(df_req.columns):
     dept_map = (
         df_req.sort_values('운용신청일자')
         .drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
