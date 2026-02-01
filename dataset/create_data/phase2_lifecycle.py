@@ -40,6 +40,8 @@ DEPT_MASTER_DATA = [
 # 시뮬레이션 확률 상수 정의 (Magic Numbers 제거)
 # ---------------------------------------------------------
 # 출력 상태 확률 (출력, 미출력)
+# 실제 운영 시 대부분의 물품이 출력 상태(라벨 부착)로 관리된다는 가정을 반영하여
+# 기존 [0.2, 0.8] 비율(출력 20%, 미출력 80%)에서 [0.8, 0.2]로 역전시켜 시뮬레이션에 적용한다.
 PROBS_PRINT_STATUS = [0.8, 0.2]
 
 # 반납 발생 확률
@@ -139,14 +141,16 @@ def get_approval_status_and_date(base_date, prob_dist=None, event_type=None, is_
 
     if status == '대기':
         min_allowed = max(base_date, RECENT_WAIT_START)
+
+        # 시작일이 오늘보다 미래라면 오늘로 강제 조정
         if min_allowed > TODAY: min_allowed = TODAY
         
-        # [Fix] start_date와 end_date가 같을 때 Faker 오류 방지
-        if min_allowed < TODAY:
+        # start_date와 end_date가 같은 경우(또는 역전) 방지
+        if min_allowed >= TODAY:
+            req_date_final = TODAY
+        else:
             temp_date = fake.date_between(start_date=min_allowed, end_date=TODAY)
             req_date_final = datetime(temp_date.year, temp_date.month, temp_date.day)
-        else:
-            req_date_final = TODAY
             
         confirm_date = req_date_final 
         
@@ -241,6 +245,8 @@ def step_determine_event(ctx):
     # 1. 조기 반납 (1%)
     if random.random() < PROB_EARLY_RETURN:
         early_date = sim_date + timedelta(days=random.randint(1, 30))
+        if early_date > TODAY:
+            early_date = TODAY
         event_date = early_date
         next_event = '반납'
         is_early = True
@@ -274,7 +280,14 @@ def step_determine_event(ctx):
     return next_event, event_date, is_early
 
 def step_process_return(ctx, event_date, is_early):
-    """C-1. 반납 처리 및 재사용 여부 결정"""
+    """
+    C-1. 반납 처리 및 재사용 여부 결정
+    
+    Returns:
+        tuple: (Action_String, Reason_String)
+        - Action_String: '재사용', '불용진행', '종료' 중 하나
+        - Reason_String: 반납 사유 (예: '사용연한경과', '잉여물품' 등)
+    """
     # 사유 및 물품상태 결정
     if is_early:
         reason = '잉여물품'
@@ -335,8 +348,14 @@ def step_process_return(ctx, event_date, is_early):
 
 def step_process_disuse(ctx, trigger_event, inherited_reason):
     """C-2. 불용 및 처분 처리"""
-    # 반납 사유 → 불용 사유 매핑
-    DISUSE_REASON_MAP = {'잉여물품': '활용부서부재'}
+    # 반납 사유 -> 불용 사유 매핑 확대
+    DISUSE_REASON_MAP = {
+        '잉여물품': '활용부서부재',
+        '사용연한경과': '내구연한 경과',
+        '고장/파손': '수리비용과다',
+        '사업종료': '활용부서부재',
+        '불용결정': '구형화'
+    }
 
     if trigger_event == '직권불용':
         reason = '직권 불용(파손/노후)'; condition = '폐품'; prev_stat = '운용'
@@ -459,15 +478,15 @@ for row in df_operation.itertuples():
         'prev_status': '-',
         'curr_condition': '신품',
         'need_initial_req': True,
-        'loop_count': 0
+        'loop_count': 0,
+        'df_operation': df_operation
     }
 
     # 1. 취득 이력 생성
     add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
 
     # 2. Lifecycle Loop (운용 -> 반납 -> 재사용/불용 -> 처분)
-    while ctx['loop_count'] <  MAX_REUSE_CYCLES:
-        ctx['loop_count'] += 1
+    while ctx['loop_count'] <=  MAX_REUSE_CYCLES:
 
         # A. 운용 신청
         if not step_operation_req(ctx):
@@ -517,10 +536,11 @@ df_history = pd.DataFrame(results['history'])
 
 cols_operation = [
     'G2B_목록번호', 'G2B_목록명', '물품고유번호', '캠퍼스','취득일자', '취득금액', '정리일자', 
-    '운용부서', '운용상태', '내용연수', '출력상태', '승인상태', '취득정리구분', '운용부서코드', '비고'
+    '운용부서', '운용상태', '내용연수', '출력상태', '승인상태', '취득정리구분', '운용부서코드', '비고', '운용확정일자'
 ]
 
-# 누락 컬럼 보정
+# [Fix] 누락 컬럼 보정 및 '운용확정일자' 초기화
+# 1. 비고 등 원본 데이터 병합
 if '비고' not in df_operation.columns:
     add_info = df_acq[['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '비고', '승인상태']].drop_duplicates()
     df_operation = df_operation.merge(
@@ -528,6 +548,12 @@ if '비고' not in df_operation.columns:
         on=['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '승인상태'],
         how='left'
     )
+
+# 2. '운용확정일자' 컬럼이 없는 경우 생성 (KeyError 방지)
+if '운용확정일자' not in df_operation.columns:
+    # 시뮬레이션 루프에서 업데이트되지 않은 경우(예: 로직 타기 전)를 대비해 빈 값으로 생성
+    # 하지만 보통 루프 내에서 업데이트 되므로, 여기서는 안전장치로 추가
+    df_operation['운용확정일자'] = ''
 
 df_operation[cols_operation].to_csv(os.path.join(DATA_DIR, '04_01_operation_master.csv'), index=False, encoding='utf-8-sig')
 

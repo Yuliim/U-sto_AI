@@ -145,7 +145,9 @@ view_inventory_scd.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황_이력
 print("\n🔍 [Phase 3] 데이터 정합성 검증 시작")
 
 # 검증 1: 이력 기반 데이터 검증
-current_snapshot = view_inventory_scd[view_inventory_scd['유효종료일자'] == '2099-12-31']
+current_snapshot = view_inventory_scd[
+    view_inventory_scd['유효종료일자'] == CURRENT_STATUS_END_DATE.strftime('%Y-%m-%d')
+]
 total_op = len(df_op)
 current_snapshot_qty = pd.to_numeric(current_snapshot['수량'], errors='coerce').sum()
 
@@ -200,9 +202,9 @@ if not df_dp.empty:
     # (참고) 대기/반려 상태인 건수 출력
     pending_cnt = len(df_dp) - len(confirmed_disposal_ids)
     if pending_cnt > 0:
-        print(f"   ℹ️ 참고: 처분 심사 대기/반려 중인 건수: {pending_cnt}건 (이들은 '불용' 상태 유지됨)")
+        print(f"   ⚠️ 진행 중인 처분 건 존재: {pending_cnt}건 (운용상태 유지 정상)")
     else:
-        # df_dp가 비어 있는 경우에도 검증 스킵 여부를 명시적으로 출력
-        print("3. 처분 상태(확정건): ℹ️ 처분 데이터가 없어 검증 건너뜀.")
+       # 모든 처분 건이 확정되어 대기/반려 건이 없음
+        print("   ✅ PASS: 모든 처분 건이 확정되어 대기/반려 건이 없습니다.")
 
 print("\n🎉 모든 작업이 완료되었습니다.")
