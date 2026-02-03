@@ -484,6 +484,90 @@ for row in df_operation.itertuples():
 
     # 1. 취득 이력 생성
     add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
+    # ==========================================================================
+    # [NEW] 특수 물품(서버) 전용 로직 (시뮬레이션 루프 패스)
+    # ==========================================================================
+    if "통신서버" in row.G2B_목록명:
+        # 1) 날짜 및 기본 정보 세팅
+        acq_dt = pd.to_datetime(row.취득일자)
+        
+        # 2) 운용 신청 (공통: 구형이든 신형이든 일단 운용은 시작함)
+        # 운용 시작일은 취득 정리일 + 1~7일 랜덤
+        op_start_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 7))
+        if op_start_date > TODAY: op_start_date = TODAY
+        
+        # 운용신청 리스트 추가 (results['req'])
+        results['req'].append({
+            '운용신청일자': op_start_date.strftime('%Y-%m-%d'),
+            '등록일자': op_start_date.strftime('%Y-%m-%d'),
+            '운용확정일자': op_start_date.strftime('%Y-%m-%d'), # 서버는 즉시 확정 가정
+            '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
+            '승인상태': '확정',
+            'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
+            '물품고유번호': ctx['asset_id'], 
+            '취득일자': row.취득일자, '취득금액': row.취득금액,
+            '운용부서': row.운용부서, '사용자': row.비고, '신청구분': '신규운용'
+        })
+
+        # 운용대장 업데이트 (메모리)
+        df_operation.at[ctx['idx'], '운용상태'] = '운용'
+        df_operation.at[ctx['idx'], '운용확정일자'] = op_start_date.strftime('%Y-%m-%d')
+        df_operation.at[ctx['idx'], '출력상태'] = '출력' # 서버는 관리태그 부착 필수
+        
+        # 이력 추가
+        add_history(ctx['asset_id'], op_start_date.strftime('%Y-%m-%d'), '취득', '운용', '신규운용 승인')
+
+        # 3) 구형 서버 (2020년 이전) -> 운용하다가 불용/처분됨
+        if acq_dt.year < 2020:
+            # 내용연수 6년 + 알파 시점에 불용
+            life_years = 6
+            disuse_date = acq_dt + timedelta(days=365*life_years + random.randint(0, 60))
+            
+            # 불용 리스트 추가
+            disuse_reason = '내구연한 경과(노후화)'
+            results['disuse'].append({
+                '불용일자': disuse_date.strftime('%Y-%m-%d'),
+                '불용확정일자': disuse_date.strftime('%Y-%m-%d'),
+                '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+                '승인상태': '확정',
+                'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
+                '물품고유번호': ctx['asset_id'], 
+                '취득일자': row.취득일자, '취득금액': row.취득금액,
+                '정리일자': row.정리일자, '운용부서': '', 
+                '운용상태' : '운용', '내용연수': row.내용연수,
+                '물품상태': '폐품', '사유': disuse_reason
+            })
+            
+            # 대장 상태 변경
+            df_operation.at[ctx['idx'], '운용상태'] = '불용'
+            add_history(ctx['asset_id'], disuse_date.strftime('%Y-%m-%d'), '운용', '불용', disuse_reason, ADMIN_USER)
+
+            # 처분 (매각)
+            disposal_date = disuse_date + timedelta(days=random.randint(30, 90))
+            if disposal_date > TODAY: disposal_date = TODAY # 미래 방지
+
+            results['disposal'].append({
+                '처분일자': disposal_date.strftime('%Y-%m-%d'),
+                '처분확정일자': disposal_date.strftime('%Y-%m-%d'),
+                '처분정리구분': '매각',
+                '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+                '승인상태': '확정',
+                'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
+                '물품고유번호': ctx['asset_id'], 
+                '취득일자': row.취득일자, '취득금액': row.취득금액,
+                '처분방식': '매각', '물품상태': '폐품', '사유': disuse_reason,
+                '불용일자': disuse_date.strftime('%Y-%m-%d'),
+                '내용연수': row.내용연수, '정리일자': row.정리일자
+            })
+
+            # 최종 상태 변경
+            df_operation.at[ctx['idx'], '운용상태'] = '처분'
+            add_history(ctx['asset_id'], disposal_date.strftime('%Y-%m-%d'), '불용', '처분', '매각 완료', ADMIN_USER)
+
+        # 4) 신형 서버 (2020년 이후) -> 그냥 '운용' 상태 유지 (별도 코드 필요 없음)
+        
+        continue # [중요] 아래 while 루프(랜덤 시뮬레이션)를 건너뜀
+    # ==========================================================================
 
     # 2. Lifecycle Loop (운용 -> 반납 -> 재사용/불용 -> 처분)
     while ctx['loop_count'] <  MAX_REUSE_CYCLES:
