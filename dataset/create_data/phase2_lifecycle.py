@@ -10,7 +10,44 @@ fake = Faker('ko_KR')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data_lifecycle") # create_data/data_lifecycle
 os.makedirs(DATA_DIR, exist_ok=True)
+# ---------------------------------------------------------
+# [NEW] 현실 기반 물품별 기대 수명 통계 (평균 μ, 표준편차 σ) - 단위: 년
+# 출처: SquareTrade, ScienceDirect, Google Research, MS/OEM Guide 등
+# ---------------------------------------------------------
+REAL_LIFETIME_STATS = {
+    # [IT 기기]
+    "노트북": (4.3, 0.9),       # 보증사/연구 통계 기반
+    "데스크톱": (5.0, 1.2),     # 기업 교체 주기 반영
+    "모니터": (7.0, 1.5),       # LCD 패널 수명 고려
+    "프린터": (6.0, 1.5),       # 레이저프린터 기준
+    "스캐너": (6.5, 1.5),
+    "라우터": (5.5, 1.5),       # 엔터프라이즈 장비 기준
+    "하드디스크": (4.5, 1.2),   # HDD AFR 고려
+    "서버": (6.0, 1.5),
+    
+    # [가구/시설]
+    "랙": (15.0, 4.0),         # 철제 구조물
+    "책상": (15.0, 3.5),       # 고품질 오피스 가구
+    "실습대": (15.0, 3.5),
+    "실험대": (15.0, 3.5),
+    "보조장": (15.0, 3.5),
+    "의자": (9.5, 2.0),        # 작업용/라운지 의자 평균
+    "소파": (11.0, 3.0),
+    "화이트보드": (7.0, 2.0),  # 인터랙티브(전자) 화이트보드
+    
+    # [기본값]
+    "default": (8.0, 2.0)      # 매칭 안되는 품목용
+}
+# ---------------------------------------------------------
+# 반납/불용 사유 그룹 정의
+# ---------------------------------------------------------
+# 1. 반납 사유 (행정적/업무적 요인)
+REASONS_RETURN = ['사업종료', '잉여물품', '공용전환']
+PROBS_RETURN_REASON = [0.6, 0.15, 0.25]
 
+# 2. 불용 사유 (물리적/규정적 요인)
+# - 수명(Normal Dist)이 다했을 때 선택될 사유들
+REASONS_PHYSICAL_END = ['고장/파손', '노후화(성능저하)', '수리비용과다']
 # ---------------------------------------------------------
 # 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
@@ -40,18 +77,12 @@ DEPT_MASTER_DATA = [
 # 시뮬레이션 확률 상수 정의 (Magic Numbers 제거)
 # ---------------------------------------------------------
 # 출력 상태 확률 (출력, 미출력)
-# 실제 운영 시 대부분의 물품이 출력 상태(라벨 부착)로 관리된다는 가정을 반영하여
-# 기존 [0.2, 0.8] 비율(출력 20%, 미출력 80%)에서 [0.8, 0.2]로 역전시켜 시뮬레이션에 적용한다.
 PROBS_PRINT_STATUS = [0.8, 0.2]
 
 # 반납 발생 확률
 PROB_EARLY_RETURN = 0.01     # 초기 반납(신품, 잉여) 확률: 1%
 PROB_RETURN_OVER_3Y = 0.05   # 3년 초과 반납 확률: 5%
-PROB_RETURN_OVER_5Y = 0.15   # 5년 초과(내구연한) 반납 확률: 15%
-
-# 반납 사유 확률 (사용연한, 고장, 불용, 사업, 잉여)
-REASONS_RETURN = ['사용연한경과', '고장/파손', '불용결정', '사업종료', '잉여물품']
-PROBS_RETURN_REASON = [0.6, 0.15, 0.1, 0.1, 0.05]
+PROB_RETURN_OVER_5Y = 0.15   # 5년 초과 반납 확률: 15%
 
 # 승인 상태 (확정, 대기, 반려)
 STATUS_CHOICES = ['확정', '대기', '반려']
@@ -61,7 +92,7 @@ RECENT_WAIT_START = datetime(2024, 10, 1)  # 2024-10 이후
 # 각 단계별 승인 상태 확률
 PROBS_STATUS_RETURN = [0.85, 0.1, 0.05] 
 PROBS_STATUS_DISUSE = [0.70, 0.25, 0.05] 
-PROBS_STATUS_DISPOSAL = [0.90, 0.08, 0.02]
+PROBS_STATUS_DISPOSAL = [0.93, 0.06, 0.01]
 
 PROB_SURPLUS_STORE = 0.9  # 잉여물품 보관 확률 (불용 스킵)
 
@@ -72,8 +103,7 @@ PROBS_DISPOSAL_BAD = [0.03, 0.95, 0.01, 0.01]  # 상태 나쁨
 
 MAX_REUSE_CYCLES = 3     # 최대 재사용 횟수 제한
 
-PROB_SURPLUS_REUSE = 0.1
-PROB_MANDATORY_DISUSE = 0.05  # 8년 이상 직권 불용 확률: 5%
+PROB_SURPLUS_REUSE = 0.1  # 잉여물품, 사업종료 재사용 확률 (신품인 경우)
 
 # 기준일자 (오늘)
 now = datetime.now()
@@ -241,83 +271,69 @@ def step_determine_event(ctx):
     
     next_event = '유지'
     event_date = TODAY + timedelta(days=1)
-    is_early = False
     # -----------------------------------------------------------
-    # [NEW] 0. 강제 직권 불용 체크 (최우선 순위)
-    # 조건: 내용연수 + 3년이 지난 물품은 무조건 폐기
+    # 1. [직권불용] 행정적 강제 처분 (내용연수 + 1년)
     # -----------------------------------------------------------
-    mandatory_disuse_days = (life_years + 3) * 365
+    limit_admin = ctx.get('force_disuse_days', 365*6) # 기본값 안전장치
+    if age_days >= limit_admin:
+        return '직권불용', sim_date # 즉시 불용 처리
+    # -----------------------------------------------------------
+    # 2. [불용신청] 현실 수명 도달 -> 물리적 한계로 인한 사용자 불용 신청
+    # -----------------------------------------------------------
+    limit_real = ctx.get('assigned_limit_days', 365*5)
     
-    if age_days >= mandatory_disuse_days:
-        # 시뮬레이션 시점에서 처리 가능한 날짜 계산 (1~30일 뒤)
-        calc_date = sim_date + timedelta(days=random.randint(1, 30))
-        
-        if calc_date > TODAY: calc_date = TODAY
-        
-        # 이미 처리 시점이 지났으면 현재 시점으로
-        if calc_date < sim_date: calc_date = sim_date
-
-        event_date = calc_date
-        next_event = '직권불용'
-        return next_event, event_date, False
+    if age_days >= limit_real:
+        return '불용신청', sim_date
     # -----------------------------------------------------------
-
-    # 1. 조기 반납 (1%)
+    # 3. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
+    # -----------------------------------------------------------
+    # 확률 체크 (기존 로직 활용)
+    is_return_triggered = False
+    
+    # (1) 조기 반납 (1%)
     if random.random() < PROB_EARLY_RETURN:
         early_date = sim_date + timedelta(days=random.randint(1, 30))
-        # 조기 반납일이 TODAY를 초과하면 조기 반납 이벤트를 설정하지 않는다.
         if early_date <= TODAY:
             event_date = early_date
-            next_event = '반납'
-            is_early = True
+            is_return_triggered = True
 
-    # 2. 일반/노후 반납
-    if next_event == '유지' and age_days > (365 * 3):
+    # (2) 사용 기간에 따른 일반 반납 확률
+    if not is_return_triggered and age_days > (365 * 3):
         prob = PROB_RETURN_OVER_5Y if age_days > (365 * 5) else PROB_RETURN_OVER_3Y
         if random.random() < prob:
-            # 30일 이상 사용 조건
             if days_since_use >= 30:
                 calc_date = sim_date + timedelta(days=random.randint(30, 365))
                 event_date = calc_date
-                next_event = '반납'
-                is_early = False
+                is_return_triggered = True
 
-    if event_date > TODAY:
-        # 미래 사건은 유지로 처리 (커서는 이동하지 않음)
-        return '유지', event_date, False
-    # 실제 사건이 발생하지 않은 경우, 시뮬레이션 커서를 이동하지 않는다.
-    if next_event == '유지':
-        return next_event, event_date, is_early
+    if is_return_triggered:
+        if event_date > TODAY:
+            return '유지', event_date
+        else:
+            return '반납', event_date # 반납은 반납대로
 
-    ctx['sim_cursor_date'] = event_date
-    return next_event, event_date, is_early
+    # 아무 일도 없으면 유지
+    return '유지', event_date
 
-def step_process_return(ctx, event_date, is_early):
+def step_process_return(ctx, event_date):
     """
     C-1. 반납 처리 및 재사용 여부 결정
-    
-    Returns:
-        tuple: (Action_String, Reason_String)
-        - Action_String: '재사용', '불용진행', '종료' 중 하나
-        - Reason_String: 반납 사유 (예: '사용연한경과', '잉여물품' 등)
+    - 사업종료, 잉여물품, 공용전환 등 업무적 사유만 처리
     """
-    # 사유 및 물품상태 결정
-    if is_early:
-        reason = '잉여물품'
+    # 1. 반납 사유 결정
+    reason = np.random.choice(REASONS_RETURN, p=PROBS_RETURN_REASON)
+    
+    # 2. 물품 상태 결정
+    if reason == '잉여물품':
         condition = '신품'
-    else:
-        # 일반 반납 (잉여물품 제외한 나머지 사유 중 선택)
-        late_reasons = ['사용연한경과', '고장/파손', '불용결정', '사업종료']
-        late_probs = [0.5, 0.3, 0.1, 0.1]
-        reason = np.random.choice(late_reasons, p=late_probs)
-        
-        if reason == '고장/파손': condition = '정비필요품'
-        elif reason == '사용연한경과': condition = '폐품'
-        else: condition = '중고품'
+    elif reason == '사업종료':
+        condition = np.random.choice(['신품', '중고품','정비필요품'], p=[0.4, 0.5, 0.1])
+    elif reason == '공용전환':
+        condition = np.random.choice(['신품', '중고품'], p=[0.3, 0.7])
     
     ctx['curr_condition'] = condition
 
-    # 승인 처리
+    # 3. 승인 처리
     status, confirm_date, req_date = get_approval_status_and_date(
         event_date,
         PROBS_STATUS_RETURN,
@@ -347,45 +363,58 @@ def step_process_return(ctx, event_date, is_early):
         
         ctx['sim_cursor_date'] = confirm_date
         
-        # 재사용 여부 결정 (신품 & 10% 확률)
-        if condition == '신품' and random.random() < PROB_SURPLUS_REUSE:
-            # 부서 재배정
+        # 반납 후 처리 경로
+        # 1. 재사용 (부서 재배정)
+        # 2. 불용 진행 (재활용 불가 판단 등)
+        
+        # 재사용 시도 (신품/중고품 상태일 때)
+        if condition in ['신품', '중고품'] and random.random() < PROB_SURPLUS_REUSE:
+            # 부서 변경
             new_dept = random.choice(DEPT_MASTER_DATA)
             ctx['curr_dept_code'] = new_dept[0]
             ctx['curr_dept_name'] = new_dept[1]
             return '재사용', reason
         else:
+            # 재사용 안되면 불용 처리
             return '불용진행', reason
             
     return '종료', reason
 
-def step_process_disuse(ctx, trigger_event, inherited_reason):
+def step_process_disuse(ctx, trigger_event, inherited_reason=None):
     """C-2. 불용 및 처분 처리"""
-    # 반납 사유 -> 불용 사유 매핑 확대
-    DISUSE_REASON_MAP = {
-        '잉여물품': '활용부서부재',
-        '사용연한경과': '내구연한 경과',
-        '고장/파손': '수리비용과다',
-        '사업종료': '활용부서부재',
-        '불용결정': '구형화'
-    }
-
+    # 1. 불용 사유 및 상태 결정
     if trigger_event == '직권불용':
-        reason = '직권 불용(파손/노후)'; condition = '폐품'; prev_stat = '운용'
-    else:
-        # 반납 사유 체크는 매핑 전에 수행
+        reason = '직권 불용(내용연수 초과)'
+        condition = '폐품'
+        prev_stat = '운용'
+        
+    elif trigger_event == '불용신청':
+        # [NEW] 현실 수명이 다해서 오는 경우 -> 물리적 사유 선택
+        reason = random.choice(REASONS_PHYSICAL_END)
+        condition = '폐품' if reason in ['고장/파손'] else '불용품'
+        prev_stat = '운용' # 반납 거치지 않고 바로 옴
+        
+    elif trigger_event == '불용진행':
+        # 반납 후 불용으로 넘어오는 경우 (사유 상속 또는 매핑)
+        # 사유: 활용부서 부재, 구형화 등
+        if inherited_reason in ['잉여물품', '사업종료']:
+            reason = np.random.choice(['활용부서부재', '구형화'], p =[0.7, 0.3])
+        else:
+            reason = inherited_reason # 공용전환 등
+            
         condition = ctx['curr_condition']
         prev_stat = '반납'
         
-        # 잉여물품 보관 스킵 로직을 '매핑 전'에 수행 
-        # inherited_reason(반납사유)이 '잉여물품'인지 확인해야 함
+        # 잉여물품 보관 스킵 로직 (확률적으로 불용 안하고 창고 보관 -> 시뮬 종료)
         if inherited_reason == '잉여물품' and condition == '신품':
-            if random.random() < PROB_SURPLUS_STORE: return # 스킵
+             if random.random() < PROB_SURPLUS_STORE: return # 불용 기록 안하고 종료
 
-        # 매핑 적용
-        reason = DISUSE_REASON_MAP.get(inherited_reason, inherited_reason)
-
-    # 불용 신청
+    else:
+        reason = '기타'
+        condition = '불용품'
+        prev_stat = '운용'
+    
+    # 2. 불용 승인 처리
     du_date = ctx['sim_cursor_date'] + timedelta(days=random.randint(1, 14))
     if du_date > TODAY: du_date = TODAY
 
@@ -467,20 +496,36 @@ df_operation = df_confirmed.loc[df_confirmed.index.repeat(df_confirmed['수량']
 df_operation['수량'] = 1
 df_operation['물품고유번호'] = create_asset_ids(df_operation)
 df_operation['운용상태'] = '취득'
+df_operation['출력상태'] = '미출력'
 
 print("⏳ [Phase 2] 자산 생애주기 시뮬레이션 시작 (운용 Loop)...")
-
-# [Fix] 출력상태 컬럼 미리 초기화 (NaN 방지 - Review 반영)
-# 기본값은 '미출력'으로 하거나, 아예 랜덤으로 미리 깔아두고 운용 확정 시 재설정하지 않도록 할 수도 있음.
-# 여기서는 '미출력'을 기본으로 둠.
-df_operation['출력상태'] = '미출력'
 
 for row in df_operation.itertuples():
     # Context 객체: 함수 간 상태 공유용
     clear_date = pd.to_datetime(row.정리일자) if pd.notna(row.정리일자) else pd.to_datetime(row.취득일자)
     
+    # ---------------------------------------------------------
+    # [NEW] 1. 물품별 현실적 기대 수명(Natural Life Limit) 계산
+    # 우선 기본값 설정
+    mu, sigma = REAL_LIFETIME_STATS["default"]
+    
+    # 목록명이나 분류명에서 키워드 검색하여 통계 적용
+    target_name = str(row.G2B_목록명) # 혹은 row.물품분류명
+    for key, stats in REAL_LIFETIME_STATS.items():
+        if key in target_name:
+            mu, sigma = stats
+            break
+            
+    # [NEW] 2. 정규분포(Normal Distribution)에서 샘플링
+    # - mu(평균)와 sigma(표준편차)를 이용해 랜덤 수명 생성
+    # - 최소 1년(365일)은 사용한다고 가정 (음수 방지)
+    assigned_life_years = max(1.0, np.random.normal(mu, sigma))
+    
+    # 일(Day) 단위로 변환
+    assigned_limit_days = int(assigned_life_years * 365)
+
     ctx = {
-        'idx': row.Index,
+        'idx': getattr(row, 'Index', 0), # 인덱스 안전하게 가져오기
         'row': row,
         'asset_id': row.물품고유번호,
         'sim_cursor_date': clear_date,
@@ -492,9 +537,10 @@ for row in df_operation.itertuples():
         'curr_condition': '신품',
         'need_initial_req': True,
         'loop_count': 0,
-        'df_operation': df_operation
+        'df_operation': df_operation,
+        'assigned_limit_days': assigned_limit_days,  # <--- 현실 수명 할당
+        'force_disuse_days': (row.내용연수 + 1) * 365 # <--- 직권불용 기준(내용연수+1년)
     }
-
     # 1. 취득 이력 생성
     add_history(ctx['asset_id'], ctx['clear_date_str'], '-', '취득', '신규 취득')
     # ==========================================================================
@@ -593,14 +639,14 @@ for row in df_operation.itertuples():
         ctx['loop_count'] += 1
 
         # B. 이벤트 결정 (유지, 반납, 직권불용)
-        event_type, event_date, is_early = step_determine_event(ctx)
+        event_type, event_date = step_determine_event(ctx)
 
         if event_type == '유지':
             break
 
         # C-1. 반납 처리
         elif event_type == '반납':
-            result_action, reason = step_process_return(ctx, event_date, is_early)
+            result_action, reason = step_process_return(ctx, event_date)
             
             if result_action == '재사용':
                 # 재사용 시, 다음 루프의 이력 생성을 위해 현재 상태를 '반납'으로 명시
@@ -609,15 +655,22 @@ for row in df_operation.itertuples():
                 continue # 루프 처음으로 (운용신청 다시 함)
             elif result_action == '불용진행':
                 ctx['curr_status'] = '반납'
-                step_process_disuse(ctx, '불용진행', reason)
+                # 반납했는데 쓸모없어서 불용으로 넘어감
+                step_process_disuse(ctx, '불용진행', inherited_reason=reason)
                 break # 불용으로 가면 운용 루프는 끝
             else:
                 break # 종료
 
-        # C-2. 직권 불용 처리
+        # C-2. 물리적 수명 만료 (불용신청)
+        elif event_type == '불용신청':
+            ctx['sim_cursor_date'] = event_date
+            step_process_disuse(ctx, '불용신청')
+            break
+
+        # C-3. 직권 불용 (행정적 만료)
         elif event_type == '직권불용':
             ctx['sim_cursor_date'] = event_date
-            step_process_disuse(ctx, '직권불용', '')
+            step_process_disuse(ctx, '직권불용')
             break
 
 # ---------------------------------------------------------
@@ -636,7 +689,6 @@ cols_operation = [
     '운용부서', '운용상태', '내용연수', '출력상태', '승인상태', '취득정리구분', '운용부서코드', '비고', '운용확정일자'
 ]
 
-# [Fix] 누락 컬럼 보정 및 '운용확정일자' 초기화
 # 1. 비고 등 원본 데이터 병합
 if '비고' not in df_operation.columns:
     add_info = df_acq[['취득일자', 'G2B_목록번호', '취득정리구분', '운용부서코드', '비고', '승인상태']].drop_duplicates()
