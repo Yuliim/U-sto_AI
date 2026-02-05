@@ -4,125 +4,276 @@ import os
 from datetime import datetime
 
 # ---------------------------------------------------------
-# 설정 및 데이터 로드
+# 0. 설정 및 데이터 로드
 # ---------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOAD_DIR = os.path.join(BASE_DIR, "data_lifecycle")
 SAVE_DIR = os.path.join(BASE_DIR, "data_ml")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-print("📂 [Phase 4] 데이터 로드 중...")
+print("📂 [Phase 4] AI 학습용 데이터 전처리 시작...")
 
-# 1. 운용 마스터 (전체 물품 목록)
-df_op = pd.read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv'))
-
-# 2. 불용/처분 목록
-df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))
+# 1. 데이터 로드 (모든 생애주기 데이터)
+try:
+    df_op = pd.read_csv(os.path.join(LOAD_DIR, '04_01_operation_master.csv')) # 운용
+    df_rt = pd.read_csv(os.path.join(LOAD_DIR, '04_03_return_list.csv'))      # 반납
+    df_du = pd.read_csv(os.path.join(LOAD_DIR, '05_01_disuse_list.csv'))      # 불용
+    df_dp = pd.read_csv(os.path.join(LOAD_DIR, '06_01_disposal_list.csv'))    # 처분
+    print(f"   - 원천 데이터 로드 완료: 총 {len(df_op)}건")
+except FileNotFoundError as e:
+    print(f"❌ 데이터 파일 누락: {e}")
+    exit()
 
 # ---------------------------------------------------------
-# 1. 데이터 병합 및 정제 (Data Cleaning)
+# 1. 데이터 병합 (Master Table 생성)
 # ---------------------------------------------------------
-print("🧹 1. 데이터 정제 및 병합 수행 중...")
+print("   1. 생애주기 병합 (운용+반납+불용+처분)...")
 
-# (1) 운용정보 + 불용정보 병합 (Left Join)
-# 병합 전에 '사유' 컬럼명을 명확하게 '불용사유'로 변경합니다.
-df_du_subset = df_du[['물품고유번호', '불용일자', '사유']].rename(columns={'사유': '불용사유'})
+# (1) 운용 + 반납 (Left Join) -> 반납일자, 반납사유(상태변화) 확보
+# 반납내역의 '사유'는 '상태변화'로 매핑 (1순위 사유)
+df_merged = pd.merge(df_op, df_rt[['물품고유번호', '반납일자', '사유']], on='물품고유번호', how='left')
+df_merged.rename(columns={'사유': '상태변화'}, inplace=True) 
 
-df_merged = pd.merge(
-    df_op, 
-    df_du_subset,
-    on='물품고유번호', 
-    how='left'
-)
+# (2) + 불용 (Left Join) -> 불용일자, 불용사유 확보
+df_merged = pd.merge(df_merged, df_du[['물품고유번호', '불용일자', '사유']], on='물품고유번호', how='left')
+df_merged.rename(columns={'사유': '불용사유'}, inplace=True)
 
-# (2) 형변환 (String -> Datetime)
-date_cols = ['취득일자', '정리일자', '불용일자']
+# (3) + 처분 (Left Join) -> 처분방식, 물품상태 확보
+# 처분내역의 '처분구분' -> '처분방식'
+df_merged = pd.merge(df_merged, df_dp[['물품고유번호', '처분방식', '물품상태']], on='물품고유번호', how='left')
+df_merged.rename(columns={'처분구분': '처분방식'}, inplace=True)
+
+# ---------------------------------------------------------
+# 2. 칼럼 매핑 및 파생변수 생성 (Feature Engineering)
+# ---------------------------------------------------------
+print("   2. 파생변수 생성 및 칼럼 정의 적용...")
+
+# [날짜 처리 및 기준일 설정]
+date_cols = ['취득일자', '반납일자', '불용일자']
 for col in date_cols:
     df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
 
-# (3) 결측치 처리
-# '정리일자'가 비어있으면 '취득일자'로 대체 (운용 시작 시점)
-df_merged['정리일자'] = df_merged['정리일자'].fillna(df_merged['취득일자'])
+# 기준일: 자산의 수명 계산 종료 시점
+# 종료된 자산(반납/불용)은 해당 일자, 운용 중인 자산은 오늘 날짜
+today = pd.to_datetime(datetime.now().date())
+df_merged['최종종료일'] = df_merged['반납일자'].combine_first(df_merged['불용일자'])
+df_merged['기준일'] = df_merged['최종종료일'].fillna(today)
 
-# (4) 이상치 처리 (예시: 취득금액이 0원 이하인 경우 제외)
-df_merged = df_merged[df_merged['취득금액'] > 0].copy()
+# [DataFrame 초기화] 정의서 순서대로 데이터 구성
+df_final = pd.DataFrame()
+
+# --- A. 정적 정보 (Static Features) ---
+df_final['물품고유번호'] = df_merged['물품고유번호']
+df_final['G2B목록명'] = df_merged['G2B_목록명']
+df_final['물품분류명'] = df_merged.get('물품분류명', df_merged['G2B_목록명']) # 분류명 없으면 목록명 사용
+df_final['내용연수'] = df_merged['내용연수']
+df_final['취득금액'] = df_merged['취득금액']
+df_final['운용부서코드'] = df_merged['운용부서코드']
+df_final['취득일자'] = df_merged['취득일자']
+df_final['반납일자'] = df_merged['반납일자']
+df_final['불용일자'] = df_merged['불용일자']
+df_final['상태변화'] = df_merged['상태변화'] # 1순위 사유 (반납사유)
+df_final['불용사유'] = df_merged['불용사유'] # 2순위 사유
+df_final['물품상태'] = df_merged['물품상태'] # 처분 시 물리적 등급
+df_final['처분방식'] = df_merged['처분방식']
+df_final['운용부서명'] = df_merged['운용부서']
+df_final['캠퍼스'] = df_merged['캠퍼스']
+df_final['서비스계수'] = 1.65 # 95% 신뢰수준 Z값 (상수)
+
+# --- B. 파생 변수 (Derived Features) ---
+
+# (1) 운용연차 (Years Used)
+# 공식: (기준일 - 취득일자) / 365
+days_diff = (df_merged['기준일'] - df_merged['취득일자']).dt.days
+df_final['운용연차'] = (days_diff / 365.0).round(2)
+# 음수 값(미래 취득 등 오류) 보정
+df_final['운용연차'] = df_final['운용연차'].apply(lambda x: x if x > 0 else 0.0)
+
+# (2) 학습데이터여부
+# 기계적 수명이 다한 것만 학습('Y'). 단순 매각이나 현재 운용 중인 것은 예측 대상('N')
+is_mech_end = df_final['처분방식'].isin(['폐기', '멸실'])
+df_final['학습데이터여부'] = np.where(is_mech_end, 'Y', 'N')
+
+# (3) 잔여내용연수
+df_final['잔여내용연수'] = (df_final['내용연수'] - df_final['운용연차']).round(2)
+
+# (4) 부서가혹도 (Department Severity)
+# 텍스트 분석을 통해 가중치 부여
+def get_severity(dept_name):
+    if pd.isna(dept_name): return 1.0
+    dept_str = str(dept_name)
+    # 고부하 부서 (IT, 공학, 연구)
+    if any(k in dept_str for k in ['소프트웨어', '공학', '전산', 'AI', '정보', '컴퓨터']):
+        return 1.3
+    # 중부하 부서 (연구실, 실험실)
+    if '연구' in dept_str or '실험' in dept_str:
+        return 1.2
+    # 일반 행정
+    return 1.0
+
+df_final['부서가혹도'] = df_final['운용부서명'].apply(get_severity)
+
+# (5) 누적사용부하
+df_final['누적사용부하'] = (df_final['운용연차'] * df_final['부서가혹도']).round(2)
+
+# (6) 고장임박도 (Failure Imminence, 0.0~1.0)
+# 공식: (운용연차 / 내용연수)^2 형태로 지수함수적 증가 모사
+ratio = df_final['운용연차'] / df_final['내용연수']
+df_final['고장임박도'] = (ratio ** 2).clip(0, 1).round(2)
+
+# (7) 가격민감도 (Price Sensitivity)
+# Log 변환 후 정규화 (최대 1억 원 기준)
+log_price = np.log1p(df_final['취득금액'])
+max_log_price = np.log1p(100000000) 
+df_final['가격민감도'] = (log_price / max_log_price).clip(0, 1).round(2)
+
+# (8) 리드타임등급 (0, 1, 2)
+# 0: <500만 (즉시), 1: <3000만 (수의계약/입찰), 2: >=3000만 (복잡한 조달)
+def get_lead_time_grade(price):
+    if price < 5000000: return 0
+    elif price < 30000000: return 1
+    else: return 2
+df_final['리드타임등급'] = df_final['취득금액'].apply(get_lead_time_grade)
+
+# (9) 장비중요도
+# (가격민감도 * 0.7) + (리드타임등급 가중치 * 0.3)
+# 리드타임등급은 0~2이므로 0.5를 곱해 0~1 스케일로 대략 맞춤
+df_final['장비중요도'] = ((df_final['가격민감도'] * 0.7) + ((df_final['리드타임등급'] * 0.5) * 0.3)).round(2)
+
+# --- C. 예측값/결과값 (Placeholder) ---
+# AI 모델 추론 전이므로 초기값 설정
+
+# (1) 실제잔여수명 [정답지]
+# 학습용 데이터(Y)인 경우: 수명이 다했으므로 잔여수명은 0 (혹은 실제 수명 - 사용 수명인데, 여기선 시점 기준 0으로 수렴)
+# 실제 회귀 학습시에는 (사망시점 - 관측시점)이 Label이 되지만, Master Table에서는 0으로 표기
+df_final['실제잔여수명'] = np.where(df_final['학습데이터여부'] == 'Y', 0, np.nan)
+
+# (2) 예측 및 재고 관련 필드 (초기화)
+df_final['예측잔여수명'] = np.nan            # 모델 예측 후 채움
+df_final['(월별)고장예상수량'] = 0           # 집계 후 채움
+df_final['안전재고'] = 0                     # Demand Forecasting 후 채움
+df_final['필요수량'] = 0                     # 고장예상 + 안전재고
+df_final['AI예측고장일'] = pd.NaT            # 기준일 + 예측잔여수명
+df_final['안전버퍼'] = 0.0                   # 모델 오차(RMSE) 기반 설정
+df_final['권장발주일'] = pd.NaT              # 예측고장일 - 리드타임
+df_final['예측실행일자'] = today             # 오늘 날짜
 
 # ---------------------------------------------------------
-# 2. 파생변수 생성 (Feature Engineering)
+# [New] 1. 결측치 처리 (Imputation)
 # ---------------------------------------------------------
-print("✨ 2. 파생변수 생성 (Feature Engineering) 중...")
+# 1) 취득금액 결측/0원: 중앙값(Median) 대체 - 평균보다 이상치 영향을 덜 받음
+median_price = df_final[df_final['취득금액'] > 0]['취득금액'].median()
+df_final['취득금액'] = df_final['취득금액'].fillna(median_price).replace(0, median_price)
 
-# 기준일자 (현재 시뮬레이션 상의 오늘)
-current_date = pd.Timestamp(datetime.now().date())
+# 2) 내용연수 결측: 최빈값(Mode) 대체
+mode_life = df_final['내용연수'].mode()[0]
+df_final['내용연수'] = df_final['내용연수'].fillna(mode_life)
 
-# [Feature 1] 캠퍼스 구분 (One-Hot Encoding or Binary Mapping)
-# 서울: 0, ERICA: 1 로 변환하여 모델이 계산할 수 있게 함
-df_merged['캠퍼스_CD'] = df_merged['캠퍼스'].map({'서울': 0, 'ERICA': 1})
-
-# [Feature 2] 총 사용 기간
-df_merged['관측종료일자'] = df_merged['불용일자'].fillna(current_date)
-df_merged['총사용일수'] = (df_merged['관측종료일자'] - df_merged['취득일자']).dt.days
-
-# [Feature 3] 잔여내구연한 (RUL)
-df_merged['법적내용연수'] = df_merged['내용연수'] * 365
-df_merged['잔여내용연수'] = df_merged['법적내용연수'] - df_merged['총사용일수']
-
-# [Feature 4] 사용 강도 지표 (Usage Intensity)
-def calculate_intensity(remark):
-    if pd.isna(remark): return 1
-    remark = str(remark)
-    if any(x in remark for x in ['실습', '공용', '서버', '네트워크']):
-        return 3 # 가혹 조건
-    elif any(x in remark for x in ['연구', '업무', '디자인']):
-        return 2 # 일반 조건
-    else:
-        return 1 # 단순 보관/기타
-
-df_merged['사용강도'] = df_merged['비고'].apply(calculate_intensity)
-
-# [Feature 5] 고장 발생 플래그 (Failure Flag)
-# 💡 [수정 포인트] 위에서 변경한 '불용사유' 컬럼을 사용합니다.
-df_merged['고장발생여부'] = df_merged['불용사유'].apply(lambda x: 1 if x == '고장/파손' else 0)
-
-# [Feature 6] 가격대별 가중치 (log scale)
-df_merged['취득금액_Log'] = np.log1p(df_merged['취득금액'])
+# 3) 핵심 날짜(취득일자) NaT: 삭제 (생애주기 계산 불가)
+initial_len = len(df_final)
+df_final = df_final.dropna(subset=['취득일자'])
+print(f"    - 결측치 처리: 취득일자 누락 {initial_len - len(df_final)}건 삭제됨")
 
 # ---------------------------------------------------------
-# 3. 데이터 분할 (Train / Valid / Test)
+# [New] 2. 파생 변수 및 형변환 (Date -> Month)
 # ---------------------------------------------------------
-print("✂️ 3. 시계열 기준 데이터 분할 (7:2:1)...")
+# (1) 운용연차 & 운용월수 (형변환)
+days_diff = (df_merged.loc[df_final.index, '기준일'] - df_final['취득일자']).dt.days
+df_final['운용연차'] = (days_diff / 365.0).round(2)
+df_final['운용월수'] = (days_diff / 30.0).astype(int) # [New] 월 단위 정수 변환
 
-# (1) 시간 순 정렬
-df_sorted = df_merged.sort_values(by='취득일자').reset_index(drop=True)
+# (2) 취득월 (계절성 반영용)
+df_final['취득월'] = df_final['취득일자'].dt.month # [New]
 
-# (2) 인덱스 계산
-n_total = len(df_sorted)
+# (3) 학습데이터여부 정의
+is_mech_end = df_final['처분방식'].isin(['폐기', '멸실'])
+df_final['학습데이터여부'] = np.where(is_mech_end, 'Y', 'N')
+
+# (4) 기타 파생 변수
+def get_severity(dept_name):
+    dept_str = str(dept_name)
+    if any(k in dept_str for k in ['소프트웨어', '공학', '전산', 'AI']): return 1.3
+    if '연구' in dept_str: return 1.2
+    return 1.0
+
+df_final['부서가혹도'] = df_final['운용부서명'].apply(get_severity)
+df_final['누적사용부하'] = (df_final['운용연차'] * df_final['부서가혹도']).round(2)
+
+log_price = np.log1p(df_final['취득금액'])
+df_final['가격민감도'] = (log_price / np.log1p(100000000)).clip(0, 1).round(2)
+
+# ---------------------------------------------------------
+# [New] 3. 이상치 제거 (Outlier Removal)
+# ---------------------------------------------------------
+print("   3. 이상치 제거 수행...")
+before_cnt = len(df_final)
+
+# 1) 논리적 이상치: 운용연차가 음수인 경우 (취득일 > 기준일)
+df_final = df_final[df_final['운용연차'] >= 0]
+
+# 2) 통계적 이상치: 취득금액 상위 0.1% 제거 (왜곡 방지)
+# 단, 학습데이터(Y)와 예측데이터(N) 모두 적용
+q999 = df_final['취득금액'].quantile(0.999)
+df_final = df_final[df_final['취득금액'] <= q999]
+
+print(f"    - 이상치 제거: {before_cnt - len(df_final)}건 제거됨 (음수 연차 또는 초고가 자산)")
+
+# ---------------------------------------------------------
+# 3. 데이터 분할 (Time Series Split 7:2:1)
+# ---------------------------------------------------------
+print("   4. 시계열 기준 데이터 분할 (Train/Valid/Test)...")
+
+# 학습용 데이터(Y)만 분할 대상
+df_train_source = df_final[df_final['학습데이터여부'] == 'Y'].copy()
+df_pred_source = df_final[df_final['학습데이터여부'] == 'N'].copy() # 예측 대상
+
+# 시간 순 정렬
+df_train_source = df_train_source.sort_values(by='취득일자')
+
+# 분할 인덱스 계산
+n_total = len(df_train_source)
 n_train = int(n_total * 0.7)
 n_valid = int(n_total * 0.2)
+# n_test는 나머지
 
-# (3) 데이터 자르기
-train_set = df_sorted.iloc[:n_train]
-valid_set = df_sorted.iloc[n_train : n_train + n_valid]
-test_set  = df_sorted.iloc[n_train + n_valid :]
+# 데이터 슬라이싱
+train_set = df_train_source.iloc[:n_train]
+valid_set = df_train_source.iloc[n_train : n_train + n_valid]
+test_set  = df_train_source.iloc[n_train + n_valid :]
 
-print(f"   - 전체 데이터: {n_total}건")
-print(f"   - Train Set : {len(train_set)}건")
-print(f"   - Valid Set : {len(valid_set)}건")
-print(f"   - Test Set  : {len(test_set)}건")
+# '데이터세트구분' 컬럼 추가 (CSV 하나로 관리할 경우 편리함)
+df_final['데이터세트구분'] = 'Prediction' # 기본값
+df_final.loc[train_set.index, '데이터세트구분'] = 'Train'
+df_final.loc[valid_set.index, '데이터세트구분'] = 'Valid'
+df_final.loc[test_set.index,  '데이터세트구분'] = 'Test'
 
+print(f"        [Split 결과]")
+print(f"   - Train (70%) : {len(train_set)}건")
+print(f"   - Valid (20%) : {len(valid_set)}건")
+print(f"   - Test  (10%) : {len(test_set)}건")
+print(f"   - Pred  (운용) : {len(df_pred_source)}건")
 # ---------------------------------------------------------
-# 4. 결과 저장
+# 3. 저장 및 요약
 # ---------------------------------------------------------
-model_cols = [
-    '물품고유번호', 'G2B_목록명', '물품분류명', '캠퍼스', '캠퍼스_CD',
-    '취득금액', '취득금액_Log', '내용연수', '사용강도', 
-    '취득일자', '불용일자', '총사용일수', '잔여내용연수', '고장발생여부',
-    '운용부서'
+# 정의서에 명시된 칼럼 순서대로 정렬 (누락 방지)
+output_cols = [
+    '물품고유번호', 'G2B목록명', '물품분류명', '내용연수', '취득금액', '운용부서코드', 
+    '취득일자', '반납일자', '불용일자', '상태변화', '불용사유', '물품상태', 
+    '처분방식', '운용부서명', '캠퍼스', '서비스계수',
+    '운용연차', '학습데이터여부', '잔여내용연수', '부서가혹도', '누적사용부하', 
+    '고장임박도', '가격민감도', '장비중요도', '리드타임등급',
+    '실제잔여수명', '예측잔여수명', '(월별)고장예상수량', '안전재고', '필요수량', 
+    'AI예측고장일', '안전버퍼', '권장발주일', '예측실행일자'
 ]
-available_cols = [c for c in model_cols if c in df_sorted.columns]
 
-train_set[available_cols].to_csv(os.path.join(SAVE_DIR, 'train.csv'), index=False, encoding='utf-8-sig')
-valid_set[available_cols].to_csv(os.path.join(SAVE_DIR, 'valid.csv'), index=False, encoding='utf-8-sig')
-test_set[available_cols].to_csv(os.path.join(SAVE_DIR, 'test.csv'), index=False, encoding='utf-8-sig')
+# 칼럼 필터링
+df_export = df_final[output_cols]
 
-print("✅ 모든 작업 완료! 'data_ml' 폴더를 확인하세요.")
+save_path = os.path.join(SAVE_DIR, 'phase4_training_data.csv')
+df_export.to_csv(save_path, index=False, encoding='utf-8-sig')
+
+print("-" * 50)
+print(f"✅ 처분 완료(학습용) 데이터: {len(df_export[df_export['학습데이터여부']=='Y'])} 건")
+print(f"✅ 운용 중(예측용) 데이터 : {len(df_export[df_export['학습데이터여부']=='N'])} 건")
+print(f"💾 최종 파일 저장 완료: {save_path}")
+print("-" * 50)
