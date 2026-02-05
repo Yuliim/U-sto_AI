@@ -223,6 +223,13 @@ def step_operation_req(ctx):
         ctx['reuse_count'] = reuse_cnt
         req_type = f'재사용({reuse_cnt}회차)' if reuse_cnt > 0 else '재사용'
     
+    # 승인 상태에 따른 표시 상태 결정
+    # 확정일 때만 '운용'으로 변경, 대기/반려는 기존 상태 유지 (취득 or 반납 등)
+    if status == '확정':
+        display_status = '운용'
+    else:
+        display_status = ctx['curr_status']
+
     results['req'].append({
         '운용신청일자': req_date_fixed.strftime('%Y-%m-%d'),
         '등록일자': req_date_fixed.strftime('%Y-%m-%d'),
@@ -232,7 +239,8 @@ def step_operation_req(ctx):
         'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
         '물품고유번호': asset_id, 
         '취득일자': row.취득일자, '취득금액': row.취득금액,
-        '운용부서': ctx['curr_dept_name'], '사용자': row.비고, '신청구분': req_type
+        '운용부서': ctx['curr_dept_name'], '사용자': row.비고, '신청구분': req_type,
+        '운용상태': display_status
     })
     
     ctx['need_initial_req'] = False # 다음부터는 재사용
@@ -341,6 +349,12 @@ def step_process_return(ctx, event_date):
     )
     confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
 
+    # 반납 리스트 저장 시, 확정 상태여야만 '반납'으로 표기, 아니면 기존 '운용' 유지
+    if status == '확정':
+        display_status = '반납'
+    else:
+        display_status = '운용'
+
     # 반납 리스트 저장
     results['return'].append({
         '반납일자': req_date.strftime('%Y-%m-%d'),
@@ -351,7 +365,7 @@ def step_process_return(ctx, event_date):
         '물품고유번호': ctx['asset_id'], 
         '취득일자': ctx['row'].취득일자,'취득금액': ctx['row'].취득금액,
         '정리일자': ctx['clear_date_str'], 
-        '운용부서': ctx['curr_dept_name'], '운용상태': '운용', 
+        '운용부서': ctx['curr_dept_name'], '운용상태': display_status,
         '물품상태': condition, '사유': reason
     })
 
@@ -425,11 +439,11 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
     )
     confirm_str = confirm_date.strftime('%Y-%m-%d') if status == '확정' else ''
 
-    # 대장 업데이트
+    # 불용 리스트 저장 시, 확정 상태여야만 '불용'으로 표기, 아니면 기존 상태 유지
     if status == '확정':
-        ctx['df_operation'].at[ctx['idx'], '운용상태'] = '불용'
-        add_history(ctx['asset_id'], confirm_str, prev_stat, '불용', reason, ADMIN_USER)
-        ctx['sim_cursor_date'] = confirm_date
+        display_status = '불용'
+    else:
+        display_status = prev_stat
 
     # 불용 데이터 저장
     results['disuse'].append({
@@ -442,10 +456,17 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
         '취득일자': ctx['row'].취득일자, '취득금액': ctx['row'].취득금액,
         '정리일자': ctx['clear_date_str'],
         '운용부서': ctx['curr_dept_name'] if trigger_event == '직권불용' else '', 
-        '운용상태' : prev_stat, 
+        '운용상태' : display_status,
         '내용연수': ctx['row'].내용연수,
         '물품상태': condition, '사유': reason
     })
+
+    # 대장 업데이트
+    if status == '확정':
+        ctx['df_operation'].at[ctx['idx'], '운용상태'] = '불용'
+        add_history(ctx['asset_id'], confirm_str, prev_stat, '불용', reason, ADMIN_USER)
+        ctx['sim_cursor_date'] = confirm_date
+
 
     # 처분 진행 (불용 확정시에만)
     if status == '확정':
@@ -482,7 +503,7 @@ def step_process_disposal(ctx, condition, disuse_reason):
         '취득일자': ctx['row'].취득일자, '취득금액': ctx['row'].취득금액,
         '처분방식': method, '물품상태': condition, '사유': disuse_reason,
         '불용일자': ctx['sim_cursor_date'].strftime('%Y-%m-%d'),
-        '내용연수': ctx['row'].내용연수, '정리일자': ctx['clear_date_str']
+        '내용연수': ctx['row'].내용연수, '정리일자': ctx['clear_date_str'],
     })
 
 # ---------------------------------------------------------
