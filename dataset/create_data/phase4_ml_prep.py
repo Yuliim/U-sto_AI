@@ -13,8 +13,13 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 
 print("📂 [Phase 4] AI 학습용 데이터 전처리 시작...")
 
-# [Fix] 안전한 파일 로딩 함수 정의 (파일이 없어도 에러 없이 빈 DF 반환)
-def load_csv_safe(filename, required=False):
+# [Copilot Fix] 병합 시 필요한 컬럼 정의 (파일 누락 시 KeyError 방지용)
+COLS_RT = ['물품고유번호', '반납일자', '사유']
+COLS_DU = ['물품고유번호', '불용일자', '사유']
+COLS_DP = ['물품고유번호', '처분방식', '물품상태', '승인상태']
+
+# [Copilot Fix] 안전한 파일 로딩 함수 정의 (expected_cols 추가)
+def load_csv_safe(filename, required=False, expected_cols=None):
     filepath = os.path.join(LOAD_DIR, filename)
     if os.path.exists(filepath):
         return pd.read_csv(filepath)
@@ -24,13 +29,16 @@ def load_csv_safe(filename, required=False):
             exit()
         else:
             print(f"   ⚠️ 파일 없음 (빈 DataFrame 생성): {filename}")
+            # Merge 시 컬럼이 없으면 에러가 나므로, 빈 컬럼이라도 생성해서 반환
+            if expected_cols:
+                return pd.DataFrame(columns=expected_cols)
             return pd.DataFrame()
 
 # 1. 데이터 로드 (모든 생애주기 데이터)
 df_op = load_csv_safe('04_01_operation_master.csv', required=True) # 운용 (필수)
-df_rt = load_csv_safe('04_03_return_list.csv')      # 반납 (선택)
-df_du = load_csv_safe('05_01_disuse_list.csv')      # 불용 (선택)
-df_dp = load_csv_safe('06_01_disposal_list.csv')    # 처분 (선택)
+df_rt = load_csv_safe('04_03_return_list.csv', expected_cols=COLS_RT)      # 반납
+df_du = load_csv_safe('05_01_disuse_list.csv', expected_cols=COLS_DU)      # 불용
+df_dp = load_csv_safe('06_01_disposal_list.csv', expected_cols=COLS_DP)    # 처분
 
 print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 
@@ -39,19 +47,20 @@ print(f"   - 원천 데이터 로드 완료: 운용 대장 {len(df_op)}건")
 # ---------------------------------------------------------
 print("   1. 생애주기 병합 (운용+반납+불용+처분)...")
 
-# (1) 운용 + 반납 (Left Join) -> 반납일자, 반납사유(상태변화) 확보
+# (1) 운용 + 반납 (Left Join)
+# df_rt가 빈 DF여도 컬럼이 있으므로 에러 없이 병합됨
 df_merged = pd.merge(df_op, df_rt[['물품고유번호', '반납일자', '사유']], on='물품고유번호', how='left')
 df_merged.rename(columns={'사유': '상태변화'}, inplace=True) 
 
-# (2) + 불용 (Left Join) -> 불용일자, 불용사유 확보
-df_merged = pd.merge(df_merged, df_du[['물품고유번호', '불용일자', '사유']], on='물품고유번호', how='left')
-df_merged.rename(columns={'사유': '불용사유'}, inplace=True)
+# (2) + 불용 (Left Join)
+df_du_subset = df_du[['물품고유번호', '불용일자', '사유']].rename(columns={'사유': '불용사유'})
+df_merged = pd.merge(df_merged, df_du_subset, on='물품고유번호', how='left')
 
-# (3) + 처분 (Left Join) -> 처분방식, 물품상태 확보
+# (3) + 처분 (Left Join)
 df_merged = pd.merge(df_merged, df_dp[['물품고유번호', '처분방식', '물품상태']], on='물품고유번호', how='left')
 
 # ---------------------------------------------------------
-# 2. 전처리 및 결측치 보정 (Imputation) - [순서 변경됨]
+# 2. 전처리 및 결측치 보정 (Imputation)
 # ---------------------------------------------------------
 print("   2. 결측치 보정 및 기본 필드 정리...")
 
@@ -87,18 +96,25 @@ df_final['캠퍼스'] = df_merged['캠퍼스']
 df_final['기준일'] = df_merged['기준일'] # 계산용 임시 컬럼
 
 # --- B. 결측치 처리 (Imputation) ---
-# [Copilot Review 반영] 파생변수 계산 전에 결측치를 먼저 채워야 함
+# [Copilot Fix] Feature Engineering 전에 결측치를 먼저 채움 + 안전장치 추가
 
 # 1) 취득금액 결측/0원: 중앙값(Median) 대체
-median_price = df_final[df_final['취득금액'] > 0]['취득금액'].median()
+# 안전장치: 데이터가 아예 없거나 양수 금액이 없는 경우 대비
+valid_prices = df_final[df_final['취득금액'] > 0]['취득금액']
+if not valid_prices.empty:
+    median_price = valid_prices.median()
+else:
+    median_price = 1000000 # Default fallback (100만원)
+
 df_final['취득금액'] = df_final['취득금액'].fillna(median_price).replace(0, median_price)
 
 # 2) 내용연수 결측: 최빈값(Mode) 대체
-if not df_final['내용연수'].mode().empty:
+# 안전장치: mode()가 비어있을 경우 대비
+if not df_final['내용연수'].dropna().empty:
     mode_life = df_final['내용연수'].mode()[0]
     df_final['내용연수'] = df_final['내용연수'].fillna(mode_life)
 else:
-    df_final['내용연수'] = df_final['내용연수'].fillna(5) # Default
+    df_final['내용연수'] = df_final['내용연수'].fillna(5) # Default fallback (5년)
 
 # 3) 핵심 날짜(취득일자) NaT: 삭제 (생애주기 계산 불가)
 initial_len = len(df_final)
@@ -157,6 +173,7 @@ df_final['가격민감도'] = (log_price / max_log_price).clip(0, 1).round(2)
 
 # (9) 리드타임등급 - [보정된 취득금액 사용]
 def get_lead_time_grade(price):
+    if pd.isna(price): return 1 # Default
     if price < 5000000: return 0
     elif price < 30000000: return 1
     else: return 2
@@ -186,8 +203,9 @@ before_cnt = len(df_final)
 df_final = df_final[df_final['운용연차'] >= 0]
 
 # 2) 통계적 이상치: 취득금액 상위 0.1% 제거 (왜곡 방지)
-q999 = df_final['취득금액'].quantile(0.999)
-df_final = df_final[df_final['취득금액'] <= q999]
+if not df_final.empty:
+    q999 = df_final['취득금액'].quantile(0.999)
+    df_final = df_final[df_final['취득금액'] <= q999]
 
 print(f"    - 이상치 제거: {before_cnt - len(df_final)}건 제거됨")
 

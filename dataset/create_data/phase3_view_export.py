@@ -199,12 +199,9 @@ if not df_dp.empty:
         err_cnt = (op_status != '처분').sum()
         print(f"3. 처분 상태(확정건): {'✅ PASS' if err_cnt == 0 else f'❌ FAIL ({err_cnt}건 미반영)'}")
     
-    # (참고) 대기/반려 상태인 건수 출력
-    pending_cnt = len(df_dp) - len(confirmed_disposal_ids)
-    if pending_cnt > 0:
-        print(f"   ⚠️ 진행 중인 처분 건 존재: {pending_cnt}건 (운용상태 유지 정상)")
-    else:
-        # 모든 처분 건이 확정되어 대기/반려 건이 없음
-        print("   ✅ PASS: 모든 처분 건이 확정되어 대기/반려 건이 없습니다.")
+    # 대기/반려 상태인 건수 출력 (ID 기준이 아닌 Row 기준 집계)
+    # 기존: len(df_dp) - len(confirmed_ids) -> 중복 ID나 로직 오류 가능성 있음
+    pending_cnt = (df_dp['승인상태'] != '확정').sum()
+    print(f"   (참고) 진행 중인 처분 건: {pending_cnt}건")
 
 print("\n🎉 모든 작업이 완료되었습니다.")
