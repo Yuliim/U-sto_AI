@@ -285,7 +285,17 @@ def step_determine_event(ctx):
     limit_real = ctx.get('assigned_limit_days', 365*5)
     
     if age_days >= limit_real:
-        return '불용신청', sim_date
+        # 수명 도달 시점을 이벤트 발생일로 정확히 계산
+        eol_date = acq_date + timedelta(days=limit_real)
+        
+        # 이벤트 날짜는 오늘을 넘을 수 없음
+        calc_date = min(eol_date, TODAY)
+        
+        # 단, 시뮬레이션 커서(이전 단계 날짜)보다 과거일 수는 없음 (시간 역행 방지)
+        if calc_date < sim_date:
+            calc_date = sim_date
+            
+        return '불용신청', calc_date
     # -----------------------------------------------------------
     # 2. [반납] 업무적 사유(사업종료, 잉여 등)에 의한 랜덤 발생
     # -----------------------------------------------------------
@@ -438,7 +448,7 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
     results['disuse'].append({
         '불용일자': req_date.strftime('%Y-%m-%d'),
         '불용확정일자': confirm_str,
-        '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+        '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
         '승인상태': status,
         'G2B_목록번호': ctx['row'].G2B_목록번호, 'G2B_목록명': ctx['row'].G2B_목록명,
         '물품고유번호': ctx['asset_id'], 
@@ -485,7 +495,7 @@ def step_process_disposal(ctx, condition, disuse_reason):
         '처분일자': req_date.strftime('%Y-%m-%d'),
         '처분확정일자': confirm_str,
         '처분정리구분': method,
-        '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+        '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
         '승인상태': status,
         'G2B_목록번호': ctx['row'].G2B_목록번호, 'G2B_목록명': ctx['row'].G2B_목록명,
         '물품고유번호': ctx['asset_id'], 
@@ -606,7 +616,7 @@ for row in df_operation.itertuples():
             results['disuse'].append({
                 '불용일자': disuse_date.strftime('%Y-%m-%d'),
                 '불용확정일자': disuse_date.strftime('%Y-%m-%d'),
-                '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+                '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': '확정',
                 'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
                 '물품고유번호': ctx['asset_id'], 
@@ -628,7 +638,7 @@ for row in df_operation.itertuples():
                 '처분일자': disposal_date.strftime('%Y-%m-%d'),
                 '처분확정일자': disposal_date.strftime('%Y-%m-%d'),
                 '처분정리구분': '매각',
-                '등록자ID': ADMIN_USER[0], '등록자명': ADMIN_USER[1],
+                '등록자ID': STAFF_USER[0], '등록자명': STAFF_USER[1],
                 '승인상태': '확정',
                 'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
                 '물품고유번호': ctx['asset_id'], 

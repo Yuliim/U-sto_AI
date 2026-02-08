@@ -240,9 +240,10 @@ ITEM_WEIGHTS = [
     0.040,  # 칠판보조장
     0.045,  # 인터랙티브화이트보드
 ]
-# [Fix] ITEM_WEIGHTS 합계 검증 로직 추가
-assert abs(sum(ITEM_WEIGHTS) - 1.0) < 0.001, f"ITEM_WEIGHTS sum is {sum(ITEM_WEIGHTS)}, must be 1.0"
-
+# ITEM_WEIGHTS 합계 검증 로직 추가
+_item_weights_sum = sum(ITEM_WEIGHTS)
+if abs(_item_weights_sum - 1.0) >= 0.001:
+    raise ValueError(f"ITEM_WEIGHTS sum is {_item_weights_sum}, must be 1.0")
 # 2. 각 물품별 부서 구매 비율 (인덱스: G2B_MASTER_DATA의 인덱스)
 # 부서 순서: [C354(소프트), C352(공학), C364(경상), C360(글로벌), A351(시설), A320(학생)]
 DEPT_WEIGHTS_BY_ITEM = {

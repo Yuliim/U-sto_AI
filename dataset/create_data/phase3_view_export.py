@@ -155,7 +155,70 @@ group_cols_scd = [
 ]
 view_inventory_scd = df_scd_raw.groupby(group_cols_scd).size().reset_index(name='수량')
 view_inventory_scd.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황_이력기반.csv'), index=False, encoding='utf-8-sig')
+# ---------------------------------------------------------
+# SCD (이력 추적) 데이터 생성
+# ---------------------------------------------------------
+print("     SCD (Slowly Changing Dimension) 생성...")
 
+# [Copilot Fix] 이력 데이터가 비어있을 경우 예외 처리
+if df_hist.empty:
+    print("      ⚠️ 이력 데이터가 없어 SCD 생성을 건너뜁니다.")
+    # 빈 DataFrame 생성 (저장 시 에러 방지용 컬럼 정의)
+    cols_scd = ['물품고유번호', 'Start_Date', 'End_Date', 'Is_Current', '운용상태', '사유', '관리자']
+    df_scd = pd.DataFrame(columns=cols_scd)
+
+else:
+    # 1. 이력 데이터 정렬
+    # '변경일자' 컬럼이 있는지 확인 후 변환
+    if '변경일자' in df_hist.columns:
+        df_hist['변경일자'] = pd.to_datetime(df_hist['변경일자'])
+        df_hist = df_hist.sort_values(by=['물품고유번호', '변경일자'])
+        
+        scd_list = []
+
+        for asset_id, group in df_hist.groupby('물품고유번호'):
+            group = group.sort_values('변경일자')
+            prev_row = None
+            
+            for idx, row in group.iterrows():
+                curr_date = row['변경일자']
+                
+                # 이전 이력 닫기
+                if prev_row is not None:
+                    scd_list.append({
+                        '물품고유번호': asset_id,
+                        'Start_Date': prev_row['변경일자'],
+                        'End_Date': curr_date - pd.Timedelta(days=1),
+                        'Is_Current': False,
+                        '운용상태': prev_row['(변경)운용상태'],
+                        '사유': prev_row['사유'],
+                        '관리자': prev_row['관리자명']
+                    })
+                
+                prev_row = row
+            
+            # 마지막 이력 (현재 상태)
+            if prev_row is not None:
+                scd_list.append({
+                    '물품고유번호': asset_id,
+                    'Start_Date': prev_row['변경일자'],
+                    'End_Date': CURRENT_STATUS_END_DATE, # 2099-12-31
+                    'Is_Current': True,
+                    '운용상태': prev_row['(변경)운용상태'],
+                    '사유': prev_row['사유'],
+                    '관리자': prev_row['관리자명']
+                })
+        
+        df_scd = pd.DataFrame(scd_list)
+        print(f"      - SCD 이력 변환 완료: {len(df_scd)}건")
+        
+    else:
+        print("      ❌ 오류: 이력 데이터에 '변경일자' 컬럼이 없습니다.")
+        cols_scd = ['물품고유번호', 'Start_Date', 'End_Date', 'Is_Current', '운용상태', '사유', '관리자']
+        df_scd = pd.DataFrame(columns=cols_scd)
+
+# SCD 저장
+df_scd.to_csv(os.path.join(SAVE_DIR, 'asset_scd_history.csv'), index=False, encoding='utf-8-sig')
 # ---------------------------------------------------------
 # 2. 데이터 정합성 검증 (Validation)
 # ---------------------------------------------------------
