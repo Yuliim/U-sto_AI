@@ -42,7 +42,7 @@ try:
     # 리뷰어 지적 사항: 과거 부서 정보 복원을 위해 운용신청 이력 로드
     path_req = os.path.join(LOAD_DIR, '04_02_operation_req_list.csv')
     if os.path.exists(path_req):
-        df_req = pd.read_csv(path_req)
+        df_req = safe_read_csv(path_req)
     else:
         df_req = pd.DataFrame(columns=['물품고유번호', '운용부서', '운용신청일자'])
         
@@ -103,58 +103,8 @@ view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'),
 # [07-01] 보유 현황 조회 (SCD Type 2 History)
 print("   - [07-01] 보유 현황(과거 시점 조회용) 데이터 생성 중...")
 
-# 1. 이력 데이터 정렬
-df_hist['변경일자'] = pd.to_datetime(df_hist['변경일자'])
-df_hist = df_hist.sort_values(by=['물품고유번호', '변경일자'])
-
-# 2. 유효 기간(Start ~ End) 생성
-df_hist['유효시작일자'] = df_hist['변경일자']
-df_hist['유효종료일자'] = df_hist.groupby('물품고유번호')['변경일자'].shift(-1) - pd.Timedelta(days=1)
-df_hist['유효종료일자'] = df_hist['유효종료일자'].fillna(CURRENT_STATUS_END_DATE)
-
-# 3. 속성 정보 결합
-# 정적 정보(운용부서 포함)는 모두 df_op에서 가져옴
-static_cols = [
-    'G2B_목록번호', 'G2B_목록명', '물품고유번호', '캠퍼스', '취득일자', '취득금액', '정리일자', 
-    '내용연수', '승인상태', '취득정리구분','운용부서', '운용부서코드', '비고'
-]
-df_static = df_op[static_cols].drop_duplicates(subset=['물품고유번호'])
-df_scd_raw = pd.merge(df_hist, df_static, on='물품고유번호', how='left')
-
-# 3-2. 부서 정보 복원 (리뷰 반영)
-# 운용대장은 반납 시 부서가 비어있으므로, df_req(운용신청)에서 최근 부서를 가져와 채움
-if not df_req.empty and {'물품고유번호', '운용부서', '운용신청일자'}.issubset(df_req.columns):
-    dept_map = (
-        df_req.sort_values('운용신청일자')
-        .drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
-    )
-
-    df_scd_raw = pd.merge(
-        df_scd_raw,
-        dept_map,
-        on='물품고유번호',
-        how='left',
-        suffixes=('', '_req')
-    )
-
-    # 운용부서_req 컬럼이 존재할 때만 보정
-    if '운용부서_req' in df_scd_raw.columns:
-        df_scd_raw['운용부서'] = (
-            df_scd_raw['운용부서']
-            .replace('', pd.NA)
-            .fillna(df_scd_raw['운용부서_req'])
-            .fillna('')
-        )
-        df_scd_raw = df_scd_raw.drop(columns=['운용부서_req'])
-
-
-# 4. 상태값 매핑 및 포맷팅
-df_scd_raw['운용상태'] = df_scd_raw['(변경)운용상태']
-df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime('%Y-%m-%d')
-df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
-df_scd_raw = df_scd_raw.fillna('')
-
-# 5. 그룹핑 및 수량 집계
+# [Fix] 리뷰 반영: df_hist 데이터 유효성 검증 (KeyError 방지)
+required_hist_cols = ['물품고유번호', '변경일자', '(변경)운용상태']
 group_cols_scd = [
     'G2B_목록번호', 'G2B_목록명', '캠퍼스',
     '취득일자', '취득금액', '정리일자', 
@@ -162,7 +112,82 @@ group_cols_scd = [
     '취득정리구분', '운용부서코드', '비고',
     '유효시작일자', '유효종료일자'
 ]
-view_inventory_scd = df_scd_raw.groupby(group_cols_scd).size().reset_index(name='수량')
+
+# 가드 처리: 데이터가 비어있거나 필수 컬럼이 없는 경우 빈 스키마 생성
+if df_hist.empty or not set(required_hist_cols).issubset(df_hist.columns):
+    print("     ⚠️ 경고: 이력 데이터(df_hist)가 없거나 필수 컬럼이 누락되어 빈 데이터를 생성합니다.")
+    view_inventory_scd = pd.DataFrame(columns=group_cols_scd + ['수량'])
+
+else:
+    try:
+        # 1. 이력 데이터 정렬
+        df_hist_proc = df_hist.copy()
+        df_hist_proc['변경일자'] = pd.to_datetime(df_hist_proc['변경일자'], errors='coerce')
+        # 날짜 변환 실패 행 제거 (NaT)
+        df_hist_proc = df_hist_proc.dropna(subset=['변경일자'])
+        df_hist_proc = df_hist_proc.sort_values(by=['물품고유번호', '변경일자'])
+
+        # 2. 유효 기간(Start ~ End) 생성
+        df_hist_proc['유효시작일자'] = df_hist_proc['변경일자']
+        df_hist_proc['유효종료일자'] = df_hist_proc.groupby('물품고유번호')['변경일자'].shift(-1) - pd.Timedelta(days=1)
+        df_hist_proc['유효종료일자'] = df_hist_proc['유효종료일자'].fillna(CURRENT_STATUS_END_DATE)
+
+        # 3. 속성 정보 결합
+        # 정적 정보(운용부서 포함)는 모두 df_op에서 가져옴
+        static_cols = [
+            'G2B_목록번호', 'G2B_목록명', '물품고유번호', '캠퍼스', '취득일자', '취득금액', '정리일자', 
+            '내용연수', '승인상태', '취득정리구분','운용부서', '운용부서코드', '비고'
+        ]
+        # 실제 존재하는 컬럼만 선택하여 병합
+        avail_static_cols = [c for c in static_cols if c in df_op.columns]
+        df_static = df_op[avail_static_cols].drop_duplicates(subset=['물품고유번호'])
+        
+        df_scd_raw = pd.merge(df_hist_proc, df_static, on='물품고유번호', how='left')
+
+        # 3-2. 부서 정보 복원 (리뷰 반영)
+        if not df_req.empty and {'물품고유번호', '운용부서', '운용신청일자'}.issubset(df_req.columns):
+            dept_map = (
+                df_req.sort_values('운용신청일자')
+                .drop_duplicates('물품고유번호', keep='last')[['물품고유번호', '운용부서']]
+            )
+
+            df_scd_raw = pd.merge(
+                df_scd_raw,
+                dept_map,
+                on='물품고유번호',
+                how='left',
+                suffixes=('', '_req')
+            )
+
+            # 운용부서_req 컬럼이 존재할 때만 보정
+            if '운용부서_req' in df_scd_raw.columns:
+                if '운용부서' in df_scd_raw.columns:
+                    df_scd_raw['운용부서'] = (
+                        df_scd_raw['운용부서']
+                        .replace('', pd.NA)
+                        .fillna(df_scd_raw['운용부서_req'])
+                        .fillna('')
+                    )
+                else:
+                    df_scd_raw['운용부서'] = df_scd_raw['운용부서_req'].fillna('')
+                
+                df_scd_raw = df_scd_raw.drop(columns=['운용부서_req'], errors='ignore')
+
+        # 4. 상태값 매핑 및 포맷팅
+        df_scd_raw['운용상태'] = df_scd_raw['(변경)운용상태']
+        df_scd_raw['유효시작일자'] = df_scd_raw['유효시작일자'].dt.strftime('%Y-%m-%d')
+        df_scd_raw['유효종료일자'] = df_scd_raw['유효종료일자'].dt.strftime('%Y-%m-%d')
+        df_scd_raw = df_scd_raw.fillna('')
+
+        # 5. 그룹핑 및 수량 집계
+        # 실제 데이터프레임에 존재하는 컬럼으로만 그룹핑 (KeyError 방지)
+        actual_group_cols = [c for c in group_cols_scd if c in df_scd_raw.columns]
+        view_inventory_scd = df_scd_raw.groupby(actual_group_cols).size().reset_index(name='수량')
+        
+    except Exception as e:
+        print(f"     ❌ 이력 데이터 처리 중 오류 발생: {e}")
+        view_inventory_scd = pd.DataFrame(columns=group_cols_scd + ['수량'])
+
 view_inventory_scd.to_csv(os.path.join(SAVE_DIR, 'View_07_01_보유현황_이력기반.csv'), index=False, encoding='utf-8-sig')
 # ---------------------------------------------------------
 # SCD (이력 추적) 데이터 생성
