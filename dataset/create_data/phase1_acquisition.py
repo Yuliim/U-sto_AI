@@ -197,9 +197,9 @@ def generate_acquisition_data_lifecycle():
                     _create_acquisition_row(acquisition_list, current_date, item_data, dept_code, dept_name, approval_status, clear_date_str)
                     
                     # 4) [핵심] 다음 구매(교체) 시점 계산
-                    # 내용연수 + 알파(-1~2년 지연) + 랜덤 오차(일)
-                    # 예: 노트북(6년) -> 5년 ~ 8년 사이 사용 후 교체
-                    usage_years = life_years + random.uniform(-1, 2)
+                    # 내용연수 + 알파(0~2년 지연) + 랜덤 오차(일)
+                    # 예: 노트북(6년) -> 6년 ~ 8년 사이 사용 후 교체
+                    usage_years = life_years + random.uniform(0, 2)
                     next_purchase_date = current_date + timedelta(days=int(usage_years * 365) + random.randint(-30, 30))
                     
                     # 날짜 갱신 (다음 사이클로 이동)
