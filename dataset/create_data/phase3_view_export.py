@@ -86,9 +86,18 @@ else:
 # [06-01] 불용 물품 목록
 # 병합에 사용할 Master 정보
 master_cols = ['물품고유번호', '내용연수', '취득금액', '취득일자', '정리일자', 'G2B_목록명']
-df_master_info = df_op[master_cols].drop_duplicates(subset=['물품고유번호'])
-cols_to_merge = [c for c in master_cols if c == '물품고유번호' or c not in df_du.columns]
-view_du_item = pd.merge(df_du, df_master_info[cols_to_merge], on='물품고유번호', how='left')
+# df_du가 비어있거나 기본 키 컬럼이 없으면 병합 대신 빈 결과를 생성
+if df_du.empty or '물품고유번호' not in df_du.columns or not set(master_cols).issubset(df_op.columns):
+    print("   ⚠️ 경고: 06_01 파일 생성을 위한 데이터(df_du 또는 df_op)가 비어있거나 필요한 컬럼이 부족합니다.")
+    base_cols = list(df_du.columns)
+    # 병합 시 추가될 master_cols 중 기본 키는 제외하고, 아직 없는 컬럼만 추가
+    extra_cols = [c for c in master_cols if c != '물품고유번호' and c not in base_cols]
+    view_du_item = pd.DataFrame(columns=base_cols + extra_cols)
+else:
+    df_master_info = df_op[master_cols].drop_duplicates(subset=['물품고유번호'])
+    cols_to_merge = [c for c in master_cols if c == '물품고유번호' or c not in df_du.columns]
+    view_du_item = pd.merge(df_du, df_master_info[cols_to_merge], on='물품고유번호', how='left')
+
 view_du_item.to_csv(os.path.join(SAVE_DIR, 'View_06_01_불용물품목록.csv'), index=False, encoding='utf-8-sig')
 
 # [07-01] 보유 현황 조회 (SCD Type 2 History)

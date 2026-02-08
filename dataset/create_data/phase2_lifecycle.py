@@ -454,7 +454,7 @@ def step_process_disuse(ctx, trigger_event, inherited_reason=None):
         '물품고유번호': ctx['asset_id'], 
         '취득일자': ctx['row'].취득일자, '취득금액': ctx['row'].취득금액,
         '정리일자': ctx['clear_date_str'],
-        '운용부서': ctx['curr_dept_name'] if trigger_event == '직권불용' else '', 
+        '운용부서': ctx['curr_dept_name'], 
         '운용상태' : display_status,
         '내용연수': ctx['row'].내용연수,
         '물품상태': condition, '사유': reason
@@ -621,7 +621,7 @@ for row in df_operation.itertuples():
                 'G2B_목록번호': row.G2B_목록번호, 'G2B_목록명': row.G2B_목록명,
                 '물품고유번호': ctx['asset_id'], 
                 '취득일자': row.취득일자, '취득금액': row.취득금액,
-                '정리일자': row.정리일자, '운용부서': '', 
+                '정리일자': row.정리일자, '운용부서': row.운용부서, 
                 '운용상태' : '불용', '내용연수': row.내용연수,
                 '물품상태': '폐품', '사유': disuse_reason
             })
@@ -667,7 +667,7 @@ for row in df_operation.itertuples():
         # 운용 신청이 정상적으로 이루어진 경우에만 루프 카운트 증가
         ctx['loop_count'] += 1
 
-        # B. 이벤트 결정 (유지, 반납, 직권불용)
+        # B. 이벤트 결정 (유지, 반납)
         event_type, event_date = step_determine_event(ctx)
 
         if event_type == '유지':
