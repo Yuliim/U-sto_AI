@@ -102,8 +102,19 @@ _disp_conf = df_merged['처분확정일자'] if '처분확정일자' in df_merge
 # 우선순위: 처분확정 > 불용확정 > 반납확정 (가장 늦은 단계의 확정일이 실제 종료 시점)
 confirmed_end_date = _disp_conf.combine_first(_disuse_conf).combine_first(_ret_conf)
 
-# 차선책: 신청일자 (반납일자 > 불용일자)
-fallback_end_date = df_merged['반납일자'].combine_first(df_merged['불용일자'])
+# -------------------------------------------------------------------------
+# [Review Fix] 차선책: 신청일자 (반납일자 > 불용일자)
+# * 수정 내용: 단순히 날짜가 있다고 쓰는 게 아니라, 승인상태가 '확정'인 경우만 유효한 종료일로 인정
+#              (대기/반려 상태인 경우 운용 중인 것으로 간주하기 위함)
+# -------------------------------------------------------------------------
+# 반납일자 유효성 체크: 반납승인상태가 '확정'인 경우에만 날짜 채택
+valid_ret_date = df_merged['반납일자'].where(df_merged['반납승인상태'] == '확정')
+
+# 불용일자 유효성 체크: 불용승인상태가 '확정'인 경우에만 날짜 채택
+valid_disuse_date = df_merged['불용일자'].where(df_merged['불용승인상태'] == '확정')
+
+# Fallback 구성: 확정된 반납일자 우선, 없으면 확정된 불용일자
+fallback_end_date = valid_ret_date.combine_first(valid_disuse_date)
 
 # 최종 종료일 도출: 확정일자 우선 적용, 없으면 신청일자 적용
 df_merged['최종종료일'] = confirmed_end_date.combine_first(fallback_end_date)
