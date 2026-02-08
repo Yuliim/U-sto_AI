@@ -170,11 +170,12 @@ print("   3. 파생변수 생성 (보정된 데이터 기반)...")
 
 # (1) 운용연차 (Years Used) & 운용월수
 days_diff = (df_final['기준일'] - df_final['취득일자']).dt.days
-df_final['운용연차'] = (days_diff / 365.0).round(2)
-# 음수 값(미래 취득 등 오류) 보정
+# 음수 일수(미래 취득일자/기준일 역전 등) 보정: 0 미만은 0으로 clip
+days_diff_clipped = days_diff.clip(lower=0)
+df_final['운용연차'] = (days_diff_clipped / 365.0).round(2)
+# 운용연차는 음수 방지를 위해 0 미만을 0으로 보정 (clip과 로직 일관성 유지)
 df_final['운용연차'] = df_final['운용연차'].apply(lambda x: x if x > 0 else 0.0)
-df_final['운용월수'] = (days_diff / 30.0).fillna(0).astype(int)
-
+df_final['운용월수'] = (days_diff_clipped / 30.0).fillna(0).astype(int)
 # (2) 취득월 (계절성)
 df_final['취득월'] = df_final['취득일자'].dt.month
 
